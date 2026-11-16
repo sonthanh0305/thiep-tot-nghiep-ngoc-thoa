@@ -130,6 +130,14 @@ test('buildPersonalizedShareUrl strips admin/pronoun and embeds only guest name'
   assert.ok(!url.includes('admin='));
   assert.ok(!url.includes('pronoun='));
   assert.ok(!url.includes('autostart='));
+  assert.equal(canAccessHostLinkGenerator(url), false);
+
+  const fallbackGuestUrl = buildPersonalizedShareUrl(
+    'https://example.com/',
+    '',
+  );
+  assert.ok(fallbackGuestUrl.includes('guest='));
+  assert.equal(canAccessHostLinkGenerator(fallbackGuestUrl), false);
 
   const ics = generateIcsCalendarContent('Gia đình');
   assert.ok(ics.includes('BEGIN:VCALENDAR'));

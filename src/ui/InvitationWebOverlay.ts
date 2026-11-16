@@ -49,6 +49,7 @@ export class InvitationWebOverlay {
   private toastTimeoutId: number | null = null;
   private editingGuestIndex: number | null = null;
   private editingRsvpId: string | null = null;
+  private guestOwnSubmittedEntry: RsvpEntry | null = null;
 
   constructor() {
     this.posterCanvas = document.createElement('canvas');
@@ -100,7 +101,15 @@ export class InvitationWebOverlay {
 
   private setupRealtimeDatabaseSubscription(): void {
     this.unsubscribeDbSync?.();
+    this.unsubscribeDbSync = null;
+
+    if (!this.isAdminMode) {
+      return;
+    }
+
     this.unsubscribeDbSync = subscribeToDatabaseChanges((updatedDb) => {
+      if (!this.isAdminMode) return;
+
       const prevRsvpCount = this.rsvpEntries.length;
       const prevLatestId = this.rsvpEntries[0]?.id;
       const newLatest = updatedDb.rsvpEntries[0];
@@ -154,23 +163,29 @@ export class InvitationWebOverlay {
   }
 
   private async initializeDataAndAssets(): Promise<void> {
-    try {
-      const db = await loadGraduationDatabase();
-      // Always preserve loaded rsvpEntries FIRST before any guestList repair
-      this.rsvpEntries = db.rsvpEntries;
+    if (this.isAdminMode) {
+      try {
+        const db = await loadGraduationDatabase();
+        // Always preserve loaded rsvpEntries FIRST before any guestList repair
+        this.rsvpEntries = db.rsvpEntries;
 
-      const hasLegacyBrokenFragment = db.guestList.some(
-        (item) => item === 'Team tiếng Trung (ĐA' || item === 'Bi)',
-      );
-      if (db.guestList.length === 0 || hasLegacyBrokenFragment) {
-        this.invitedGuestList = [...DEFAULT_INVITED_GUEST_LIST];
-        await saveAdminGuestList(this.invitedGuestList);
-      } else {
-        this.invitedGuestList = db.guestList;
+        const hasLegacyBrokenFragment = db.guestList.some(
+          (item) => item === 'Team tiếng Trung (ĐA' || item === 'Bi)',
+        );
+        if (db.guestList.length === 0 || hasLegacyBrokenFragment) {
+          this.invitedGuestList = [...DEFAULT_INVITED_GUEST_LIST];
+          await saveAdminGuestList(this.invitedGuestList);
+        } else {
+          this.invitedGuestList = db.guestList;
+        }
+        this.render();
+      } catch {
+        // Fallback handled inside jsonDatabase
       }
-      this.render();
-    } catch {
-      // Fallback handled inside jsonDatabase
+    } else {
+      // Guest mode: strictly keep global RSVP list and guest roster hidden
+      this.rsvpEntries = [];
+      this.invitedGuestList = [];
     }
 
     await this.refreshPersonalizedPosterPreview();
@@ -1169,12 +1184,9 @@ export class InvitationWebOverlay {
                   <h3 class="font-serif-editorial text-xl sm:text-2xl font-bold theme-text-primary">
                     Gửi Lời Chúc & Xác Nhận Tham Dự
                   </h3>
-                  <span class="px-3 py-1 rounded-full text-xs theme-badge font-mono-code font-bold">
-                    ${this.rsvpEntries.length} lời chúc
-                  </span>
                 </div>
 
-                <form id="rsvp-wish-form" class="space-y-3 mb-4">
+                <form id="rsvp-wish-form" class="space-y-3">
                   <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     <input id="rsvp-name"
                            type="text"
@@ -1208,43 +1220,18 @@ export class InvitationWebOverlay {
                 </form>
 
                 ${
-                  this.rsvpEntries.length > 0
+                  this.guestOwnSubmittedEntry
                     ? `
-                <div class="space-y-2.5 max-h-[340px] overflow-y-auto custom-scrollbar pr-1">
-                  ${this.rsvpEntries
-                    .map(
-                      (entry) => `
-                    <div class="rounded-2xl theme-card-subtle p-3.5">
-                      <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <span class="font-bold text-xs sm:text-sm theme-text-accent">
-                            ${this.escapeHtml(entry.guestName)}
-                          </span>
-                          <span class="text-[11px] theme-text-muted">
-                            • ${this.escapeHtml(entry.relation)} (${this.escapeHtml(entry.createdAt)})
-                          </span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                          ${this.renderAttendancePill(entry.attendance)}
-                          ${
-                            this.isAdminMode
-                              ? `<button type="button"
-                                         data-delete-rsvp-id="${this.escapeHtml(entry.id)}"
-                                         title="Xóa lời chúc này"
-                                         class="admin-delete-rsvp px-2 py-0.5 rounded-lg theme-input text-[10px] theme-text-muted cursor-pointer">
-                                  ✕
-                                </button>`
-                              : ''
-                          }
-                        </div>
-                      </div>
-                      <p class="text-xs sm:text-sm theme-text-primary leading-relaxed">
-                        “${this.escapeHtml(entry.message)}”
-                      </p>
-                    </div>
-                  `,
-                    )
-                    .join('')}
+                <div class="rounded-2xl theme-card-subtle p-4 border border-strong mt-4">
+                  <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+                    <span class="font-bold text-xs sm:text-sm theme-text-accent">
+                      ✓ Đã gửi lời chúc & xác nhận tham dự đến Ngọc Thoa
+                    </span>
+                    ${this.renderAttendancePill(this.guestOwnSubmittedEntry.attendance)}
+                  </div>
+                  <p class="text-xs sm:text-sm theme-text-secondary">
+                    Cảm ơn <strong>${this.escapeHtml(this.guestOwnSubmittedEntry.guestName)}</strong> đã gửi lời chúc và xác nhận tham dự!
+                  </p>
                 </div>
                 `
                     : ''
@@ -1297,9 +1284,8 @@ export class InvitationWebOverlay {
     const isDefaultAdmin =
       this.isAdminMode &&
       (this.guestName === 'Ngọc Thoa' || this.guestName === 'Quý khách');
-    const cleanGuest =
-      this.guestName === 'Quý khách' || isDefaultAdmin ? '' : this.guestName;
-    return buildPersonalizedShareUrl(baseUrl, cleanGuest);
+    const targetGuestName = isDefaultAdmin ? 'Quý khách' : this.guestName;
+    return buildPersonalizedShareUrl(baseUrl, targetGuestName);
   }
 
   private attachSplashListeners(): void {
@@ -1346,10 +1332,15 @@ export class InvitationWebOverlay {
         window.history.pushState({}, '', adminUrl);
         this.isAdminMode = true;
         this.isHostPreviewingGuest = false;
+        if (this.guestName === 'Quý khách') {
+          this.guestName = 'Ngọc Thoa';
+        }
         const db = await loadGraduationDatabase();
         this.invitedGuestList =
           db.guestList.length > 0 ? db.guestList : this.invitedGuestList;
         this.rsvpEntries = db.rsvpEntries;
+        this.setupRealtimeDatabaseSubscription();
+        await this.refreshPersonalizedPosterPreview();
         this.render();
         this.showToast('Đã quay về Quản Trị');
       });
@@ -1710,7 +1701,7 @@ export class InvitationWebOverlay {
 
       document
         .getElementById('btn-preview-as-guest')
-        ?.addEventListener('click', () => {
+        ?.addEventListener('click', async () => {
           soundEngine.playSoftClick();
           try {
             window.sessionStorage.setItem(HOST_PREVIEW_SESSION_KEY, '1');
@@ -1718,12 +1709,18 @@ export class InvitationWebOverlay {
             // Ignore
           }
           const guestUrl = new URL(this.getShareableLink());
+          const previewGuestName =
+            (guestUrl.searchParams.get('guest') ?? '').trim() || 'Quý khách';
+          guestUrl.searchParams.set('guest', previewGuestName);
           guestUrl.searchParams.set('autostart', '1');
           window.history.pushState({}, '', guestUrl.toString());
+          this.guestName = previewGuestName;
           this.isAdminMode = canAccessHostLinkGenerator(
             window.location.search,
           );
           this.isHostPreviewingGuest = !this.isAdminMode;
+          this.setupRealtimeDatabaseSubscription();
+          await this.refreshPersonalizedPosterPreview();
           this.render();
         });
 
@@ -1851,14 +1848,22 @@ export class InvitationWebOverlay {
       };
 
       const savedDb = await submitGuestRsvpEntry(newEntry);
-      this.rsvpEntries = savedDb.rsvpEntries;
-      if (savedDb.guestList.length > 0) {
-        this.invitedGuestList = savedDb.guestList;
+      this.guestOwnSubmittedEntry = newEntry;
+      if (this.isAdminMode) {
+        this.rsvpEntries = savedDb.rsvpEntries;
+        if (savedDb.guestList.length > 0) {
+          this.invitedGuestList = savedDb.guestList;
+        }
+      } else {
+        this.rsvpEntries = [];
+      }
+      if (msgEl) {
+        msgEl.value = '';
       }
       soundEngine.playCelebrationFanfare();
       this.render();
       this.showToast(
-        `Đã lưu lời chúc & xác nhận của ${guestName} vào hệ thống!`,
+        `Đã gửi lời chúc & xác nhận của ${guestName} đến Ngọc Thoa!`,
       );
     });
   }

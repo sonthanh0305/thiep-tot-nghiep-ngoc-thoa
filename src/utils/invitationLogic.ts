@@ -302,21 +302,17 @@ export function buildPersonalizedShareUrl(
   baseUrl: string,
   guestName: string,
 ): string {
+  const effectiveGuest = guestName.trim() || 'Quý khách';
   try {
     const url = new URL(baseUrl);
-    const cleanName = guestName.trim();
     url.searchParams.delete('autostart');
     url.searchParams.delete('pronoun');
     url.searchParams.delete('admin');
-    if (cleanName) {
-      url.searchParams.set('guest', cleanName);
-    } else {
-      url.searchParams.delete('guest');
-    }
+    url.searchParams.set('guest', effectiveGuest);
     return url.toString();
   } catch {
-    const encoded = encodeURIComponent(guestName.trim());
-    return encoded ? `${baseUrl}?guest=${encoded}` : baseUrl;
+    const encoded = encodeURIComponent(effectiveGuest);
+    return `${baseUrl}?guest=${encoded}`;
   }
 }
 
