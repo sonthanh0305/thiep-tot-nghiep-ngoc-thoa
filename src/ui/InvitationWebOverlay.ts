@@ -70,10 +70,12 @@ export class InvitationWebOverlay {
 
     const params = new URLSearchParams(window.location.search);
     const urlGuest = (params.get('guest') ?? '').trim();
+    this.isAdminMode = canAccessHostLinkGenerator(window.location.search);
     if (urlGuest.length > 0) {
       this.guestName = urlGuest;
+    } else if (this.isAdminMode) {
+      this.guestName = 'Ngọc Thoa';
     }
-    this.isAdminMode = canAccessHostLinkGenerator(window.location.search);
 
     try {
       if (this.isAdminMode) {
@@ -286,24 +288,6 @@ export class InvitationWebOverlay {
     }
   }
 
-  public openOriginalMapModal(): void {
-    const modal = document.getElementById('photo-lightbox-modal');
-    const modalImg = document.getElementById(
-      'photo-lightbox-img',
-    ) as HTMLImageElement | null;
-    const modalCaption = document.getElementById('photo-lightbox-caption');
-    const modalBadge = document.getElementById('photo-lightbox-badge');
-
-    if (modal && modalImg && modalCaption && modalBadge) {
-      modalImg.src = GRADUATION_INFO.campusMapAssetPath;
-      modalBadge.textContent = 'BẢN ĐỒ PTIT TP.HCM — 97 MAN THIỆN';
-      modalCaption.textContent =
-        'Bước vào Cổng chính (97 Man Thiện) rồi rẽ tay phải là tới ngay nguyên khu Hội Trường A (HTA) to đùng và bãi Giữ xe bên phải.';
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-    }
-  }
-
   private showToast(message: string): void {
     const toast = document.getElementById('graduation-toast');
     const toastText = document.getElementById('graduation-toast-text');
@@ -348,24 +332,19 @@ export class InvitationWebOverlay {
    */
   private renderPtitCampusMapIllustration(): string {
     return `
-      <div class="rounded-2xl theme-card-subtle p-4 sm:p-5 mt-3">
-        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <div class="flex items-center gap-2.5">
-            <span class="text-lg">🗺️</span>
+      <div class="rounded-2xl theme-card-subtle p-4 sm:p-6 mt-4">
+        <div class="mb-4">
+          <div class="flex items-start gap-3">
+            <span class="text-2xl leading-tight shrink-0">🗺️</span>
             <div>
-              <h4 class="text-sm sm:text-base font-bold theme-text-primary">
+              <h4 class="text-base sm:text-xl font-bold theme-text-primary leading-tight mb-1">
                 Sơ Đồ Khuôn Viên PTIT TP.HCM — Chỉ Dẫn Khu Hội Trường A (HTA)
               </h4>
-              <p class="text-xs theme-text-secondary">
-                Bước vào <strong>Cổng chính (97 Man Thiện)</strong> rồi <strong>rẽ tay phải</strong> là tới ngay nguyên khu <strong>Hội Trường A (HTA)</strong> lớn và bãi <strong>Giữ xe</strong> bên phải
+              <p class="text-sm sm:text-base theme-text-secondary leading-relaxed">
+                Bước vào <strong class="theme-text-primary">Cổng chính (97 Man Thiện)</strong> rồi <strong class="theme-text-accent">rẽ tay phải</strong> là tới ngay nguyên khu <strong class="theme-text-accent">Hội Trường A (HTA)</strong> lớn và bãi <strong class="theme-text-primary">Giữ xe</strong> bên phải.
               </p>
             </div>
           </div>
-          <button type="button"
-                  id="btn-view-original-map"
-                  class="btn-secondary px-3 py-1.5 rounded-xl text-xs cursor-pointer shrink-0">
-            🔍 Xem ảnh bản đồ gốc
-          </button>
         </div>
 
         <!-- Illustrated PTIT HCM Vector Map -->
@@ -393,35 +372,35 @@ export class InvitationWebOverlay {
               <rect x="92" y="88" width="60" height="14" fill="#ec6b9e" />
               <!-- BC Green Square -->
               <rect x="34" y="34" width="42" height="34" fill="#7cf365" />
-              <text x="55" y="55" text-anchor="middle" fill="#3a5a40" font-size="11" font-weight="700">BC</text>
+              <text x="55" y="55" text-anchor="middle" fill="#3a5a40" font-size="11.5" font-weight="700">BC</text>
 
               <!-- Node Badges N, M, P, K -->
               <circle cx="80" cy="12" r="10" fill="#9e9b98" />
-              <text x="80" y="16" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">N</text>
+              <text x="80" y="16" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">N</text>
               <circle cx="15" cy="56" r="10" fill="#9e9b98" />
-              <text x="15" y="60" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">M</text>
+              <text x="15" y="60" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">M</text>
               <circle cx="145" cy="52" r="10" fill="#9e9b98" />
-              <text x="145" y="56" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">P</text>
+              <text x="145" y="56" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">P</text>
               <circle cx="104" cy="94" r="10" fill="#9e9b98" />
-              <text x="104" y="98" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">K</text>
+              <text x="104" y="98" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">K</text>
 
               <!-- Y tế Red Box -->
-              <rect x="44" y="120" width="24" height="22" fill="#c92a2a" />
-              <text x="56" y="135" text-anchor="middle" fill="#fff" font-size="8" font-weight="700">Y tế</text>
+              <rect x="44" y="120" width="26" height="22" fill="#c92a2a" />
+              <text x="57" y="135" text-anchor="middle" fill="#fff" font-size="9" font-weight="700">Y tế</text>
 
               <!-- Q & H Blue KTX Bars -->
               <rect x="6" y="154" width="72" height="16" fill="#38a3f1" />
               <circle cx="42" cy="162" r="10" fill="#9e9b98" />
-              <text x="42" y="166" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">Q</text>
+              <text x="42" y="166" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">Q</text>
 
               <rect x="6" y="194" width="72" height="16" fill="#38a3f1" />
               <circle cx="42" cy="202" r="10" fill="#9e9b98" />
-              <text x="42" y="206" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">H</text>
+              <text x="42" y="206" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">H</text>
 
               <!-- Building E (Orange Vertical Block) -->
               <rect x="90" y="112" width="64" height="100" fill="#f7a941" />
               <circle cx="122" cy="162" r="13" fill="#9e9b98" />
-              <text x="122" y="166" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">E</text>
+              <text x="122" y="166" text-anchor="middle" fill="#fff" font-size="11.5" font-weight="700">E</text>
             </g>
 
             <!-- TOP-CENTER BLOCK: Căn tin, BĐ, HTD, and Khu I / I6 -->
@@ -429,20 +408,20 @@ export class InvitationWebOverlay {
               <rect x="0" y="0" width="310" height="86" rx="4" fill="#ffffff" />
               <!-- Căn tin Yellow -->
               <rect x="6" y="6" width="126" height="74" fill="#fff352" />
-              <text x="44" y="34" text-anchor="middle" fill="#5c5346" font-size="14" font-weight="700">Căn tin</text>
+              <text x="44" y="34" text-anchor="middle" fill="#5c5346" font-size="14.5" font-weight="800">Căn tin</text>
               <!-- BĐ Green -->
               <rect x="84" y="6" width="46" height="38" fill="#7cf365" stroke="#fff" stroke-width="2" />
               <text x="107" y="29" text-anchor="middle" fill="#495057" font-size="12" font-weight="700">BĐ</text>
               <!-- HTD Circle -->
               <circle cx="28" cy="68" r="15" fill="#9e9b98" />
-              <text x="28" y="72" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">HTD</text>
+              <text x="28" y="72" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">HTD</text>
 
               <!-- Khu I Blue -->
               <rect x="134" y="6" width="170" height="74" fill="#38a3f1" />
               <circle cx="218" cy="38" r="12" fill="#9e9b98" />
-              <text x="218" y="42" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">I</text>
+              <text x="218" y="42" text-anchor="middle" fill="#fff" font-size="11.5" font-weight="700">I</text>
               <rect x="248" y="56" width="30" height="20" fill="#7950f2" stroke="#fff" stroke-width="1.5" />
-              <text x="263" y="70" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="700">I6</text>
+              <text x="263" y="70" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">I6</text>
             </g>
 
             <!-- TOP-RIGHT BLOCK: Khu J -->
@@ -451,14 +430,14 @@ export class InvitationWebOverlay {
               <rect x="6" y="6" width="54" height="37" fill="#38a3f1" />
               <rect x="6" y="43" width="54" height="37" fill="#ec6b9e" />
               <circle cx="33" cy="43" r="11" fill="#9e9b98" />
-              <text x="33" y="47" text-anchor="middle" fill="#fff" font-size="10.5" font-weight="700">J</text>
+              <text x="33" y="47" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">J</text>
             </g>
 
             <!-- MIDDLE GREEN PARK: KHUÔN VIÊN -->
             <g transform="translate(222, 144)">
               <rect x="0" y="0" width="354" height="48" rx="4" fill="#ffffff" />
               <rect x="5" y="5" width="344" height="38" fill="#46b937" />
-              <text x="150" y="29" text-anchor="middle" fill="#ffffff" font-size="15" font-weight="700">khuôn viên 🌳</text>
+              <text x="150" y="29" text-anchor="middle" fill="#ffffff" font-size="15.5" font-weight="700">khuôn viên 🌳</text>
             </g>
 
             <!-- CENTER BLOCK: DÃY PHÒNG HỌC A & THÁP A -->
@@ -468,8 +447,8 @@ export class InvitationWebOverlay {
 
               <!-- Photocopy Badge -->
               <circle cx="22" cy="22" r="17" fill="#8d8a87" />
-              <text x="22" y="19" text-anchor="middle" fill="#fff" font-size="8.5" font-weight="700">Photo</text>
-              <text x="22" y="29" text-anchor="middle" fill="#fff" font-size="8.5" font-weight="700">copy</text>
+              <text x="22" y="19" text-anchor="middle" fill="#fff" font-size="9" font-weight="700">Photo</text>
+              <text x="22" y="29" text-anchor="middle" fill="#fff" font-size="9" font-weight="700">copy</text>
 
               <!-- Tháp A Red Icon -->
               <circle cx="74" cy="22" r="13" fill="#d92b2b" stroke="#fff" stroke-width="1.5" />
@@ -477,15 +456,15 @@ export class InvitationWebOverlay {
               <line x1="70" y1="22" x2="78" y2="22" stroke="#fff" stroke-width="1.4" />
 
               <!-- A Badge -->
-              <circle cx="126" cy="27" r="13" fill="#9e9b98" />
-              <text x="126" y="31" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="700">A</text>
-              <text x="178" y="31" text-anchor="middle" fill="#5c3d33" font-size="10.5" font-weight="700">Dãy phòng học A</text>
+              <circle cx="122" cy="27" r="13" fill="#9e9b98" />
+              <text x="122" y="31" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="700">A</text>
+              <text x="178" y="31" text-anchor="middle" fill="#3e2723" font-size="11.5" font-weight="800">Dãy phòng học A</text>
             </g>
 
             <!-- Tháp A Cloud Callout -->
             <g transform="translate(225, 260)">
-              <rect x="0" y="0" width="54" height="20" rx="10" fill="#ffffff" />
-              <text x="27" y="14" text-anchor="middle" fill="#495057" font-size="10" font-weight="700">Tháp A</text>
+              <rect x="0" y="0" width="58" height="21" rx="10.5" fill="#ffffff" />
+              <text x="29" y="14" text-anchor="middle" fill="#343a40" font-size="10.5" font-weight="700">Tháp A</text>
             </g>
 
             <!-- BUILDING B (Next to A) -->
@@ -493,7 +472,7 @@ export class InvitationWebOverlay {
               <rect x="0" y="0" width="50" height="54" rx="4" fill="#ffffff" />
               <rect x="5" y="5" width="40" height="44" fill="#f7a941" />
               <circle cx="25" cy="27" r="12" fill="#9e9b98" />
-              <text x="25" y="31" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">B</text>
+              <text x="25" y="31" text-anchor="middle" fill="#fff" font-size="11.5" font-weight="700">B</text>
             </g>
 
             <!-- PARKING LOT: GIỮ XE (Right side above HTA) -->
@@ -501,7 +480,7 @@ export class InvitationWebOverlay {
               <rect x="0" y="0" width="166" height="66" rx="6" fill="#ffffff" />
               <rect x="5" y="5" width="156" height="56" rx="4" fill="#fff352" />
               <text x="83" y="31" text-anchor="middle" fill="#2b2d42" font-size="16" font-weight="800">🛵 Bãi Giữ Xe</text>
-              <text x="83" y="48" text-anchor="middle" fill="#5c5346" font-size="11" font-weight="700">(Vào cổng rẽ phải gửi xe)</text>
+              <text x="83" y="48" text-anchor="middle" fill="#495057" font-size="11.5" font-weight="700">(Vào cổng rẽ phải gửi xe)</text>
             </g>
 
             <!-- ============================================================
@@ -514,45 +493,45 @@ export class InvitationWebOverlay {
               <rect x="6" y="6" width="162" height="90" rx="6" fill="#7c4dff" />
 
               <!-- Top Badge inside HTA -->
-              <rect x="18" y="13" width="138" height="22" rx="11" fill="#fde047" />
-              <text x="87" y="28" text-anchor="middle" fill="#7c2d12" font-size="10.5" font-weight="800">
+              <rect x="14" y="12" width="146" height="23" rx="11.5" fill="#fde047" />
+              <text x="87" y="27" text-anchor="middle" fill="#7c2d12" font-size="11" font-weight="800">
                 📍 NƠI TỔ CHỨC LỄ (11h30)
               </text>
 
               <!-- Giant HTA Title -->
-              <text x="87" y="59" text-anchor="middle" fill="#ffffff" font-size="24" font-weight="800" letter-spacing="1">
+              <text x="87" y="59" text-anchor="middle" fill="#ffffff" font-size="25" font-weight="800" letter-spacing="1">
                 HTA
               </text>
-              <text x="87" y="77" text-anchor="middle" fill="#fef08a" font-size="12.5" font-weight="800">
+              <text x="87" y="77" text-anchor="middle" fill="#fef08a" font-size="13" font-weight="800">
                 KHU HỘI TRƯỜNG A
               </text>
-              <text x="87" y="91" text-anchor="middle" fill="#f3e8ff" font-size="10" font-weight="600">
+              <text x="87" y="92" text-anchor="middle" fill="#ffffff" font-size="10.5" font-weight="700">
                 (Vào cổng chính ➔ Rẽ tay phải)
               </text>
             </g>
 
             <!-- LEGEND BOX (Bottom-Left) -->
-            <g transform="translate(116, 286)">
-              <rect x="0" y="0" width="112" height="68" rx="4" fill="#ffffff" />
-              <rect x="8" y="7" width="14" height="11" fill="#7c4dff" />
-              <text x="27" y="16" fill="#343a40" font-size="9.5" font-weight="700">HTA (Hội trường A)</text>
-              <rect x="8" y="22" width="14" height="11" fill="#f7a941" />
-              <text x="27" y="31" fill="#343a40" font-size="9.5" font-weight="600">Phòng học</text>
-              <rect x="8" y="37" width="14" height="11" fill="#38a3f1" />
-              <text x="27" y="46" fill="#343a40" font-size="9.5" font-weight="600">KTX Nam</text>
-              <rect x="8" y="52" width="14" height="11" fill="#ec6b9e" />
-              <text x="27" y="61" fill="#343a40" font-size="9.5" font-weight="600">KTX Nữ</text>
+            <g transform="translate(114, 284)">
+              <rect x="0" y="0" width="124" height="72" rx="5" fill="#ffffff" />
+              <rect x="8" y="8" width="14" height="11" fill="#7c4dff" />
+              <text x="27" y="17" fill="#212529" font-size="10.5" font-weight="700">HTA (Hội trường A)</text>
+              <rect x="8" y="24" width="14" height="11" fill="#f7a941" />
+              <text x="27" y="33" fill="#212529" font-size="10.5" font-weight="600">Phòng học</text>
+              <rect x="8" y="40" width="14" height="11" fill="#38a3f1" />
+              <text x="27" y="49" fill="#212529" font-size="10.5" font-weight="600">KTX Nam</text>
+              <rect x="8" y="56" width="14" height="11" fill="#ec6b9e" />
+              <text x="27" y="65" fill="#212529" font-size="10.5" font-weight="600">KTX Nữ</text>
             </g>
 
             <!-- BOTTOM ROAD: ĐƯỜNG MAN THIỆN & CỔNG CHÍNH -->
             <g transform="translate(20, 372)">
               <rect x="0" y="0" width="640" height="30" rx="5" fill="#ffffff" />
               <rect x="6" y="6" width="218" height="18" fill="#6366f1" />
-              <text x="115" y="19" text-anchor="middle" fill="#ffffff" font-size="10" font-weight="700">ĐƯỜNG MAN THIỆN (97 MAN THIỆN)</text>
+              <text x="115" y="19" text-anchor="middle" fill="#ffffff" font-size="10.5" font-weight="700">ĐƯỜNG MAN THIỆN (97 MAN THIỆN)</text>
 
               <!-- Main Gate Opening -->
-              <rect x="276" y="2" width="112" height="26" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2" />
-              <text x="332" y="19" text-anchor="middle" fill="#92400e" font-size="11.5" font-weight="800">⬆️ CỔNG CHÍNH</text>
+              <rect x="272" y="2" width="120" height="26" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2" />
+              <text x="332" y="19" text-anchor="middle" fill="#92400e" font-size="12" font-weight="800">⬆️ CỔNG CHÍNH</text>
 
               <rect x="432" y="6" width="202" height="18" fill="#6366f1" />
               <circle cx="534" cy="15" r="11" fill="#d92b2b" stroke="#fff" stroke-width="2" />
@@ -567,9 +546,9 @@ export class InvitationWebOverlay {
             <path d="M 442 312 L 442 202 L 490 202" fill="none" stroke="#ffffff" stroke-width="3" class="map-route-animated" />
 
             <!-- Direction Callout Pill on the Turn-Right Path -->
-            <g transform="translate(358, 282)">
-              <rect x="0" y="0" width="108" height="22" rx="11" fill="#8b1e16" stroke="#fde047" stroke-width="1.5" />
-              <text x="54" y="15" text-anchor="middle" fill="#fde047" font-size="10" font-weight="800">
+            <g transform="translate(356, 280)">
+              <rect x="0" y="0" width="114" height="24" rx="12" fill="#8b1e16" stroke="#fde047" stroke-width="1.5" />
+              <text x="57" y="16" text-anchor="middle" fill="#fde047" font-size="11" font-weight="800">
                 Rẽ phải ➔ HTA ➡️
               </text>
             </g>
@@ -583,18 +562,18 @@ export class InvitationWebOverlay {
         </div>
 
         <!-- 3-Step Quick Arrival Guide below Map -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mt-3 text-xs sm:text-sm">
-          <div class="rounded-xl theme-card px-3.5 py-2.5 flex items-center gap-2">
-            <span class="font-bold theme-text-accent">1. Cổng vào:</span>
-            <span class="theme-text-secondary">Cổng chính 97 Man Thiện</span>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 text-sm sm:text-base">
+          <div class="rounded-xl theme-card p-3.5 flex items-center gap-2">
+            <span class="font-bold theme-text-accent shrink-0">1. Cổng vào:</span>
+            <span class="theme-text-primary font-medium">Cổng chính 97 Man Thiện</span>
           </div>
-          <div class="rounded-xl theme-card px-3.5 py-2.5 flex items-center gap-2">
-            <span class="font-bold theme-text-accent">2. Rẽ tay phải:</span>
-            <span class="theme-text-secondary">Gửi xe tại Bãi giữ xe bên phải</span>
+          <div class="rounded-xl theme-card p-3.5 flex items-center gap-2">
+            <span class="font-bold theme-text-accent shrink-0">2. Rẽ tay phải:</span>
+            <span class="theme-text-primary font-medium">Gửi xe tại Bãi giữ xe bên phải</span>
           </div>
-          <div class="rounded-xl theme-card px-3.5 py-2.5 flex items-center gap-2">
-            <span class="font-bold theme-text-accent">3. Nơi dự lễ:</span>
-            <span class="theme-text-secondary">Khu Hội Trường A (HTA - Màu tím)</span>
+          <div class="rounded-xl theme-card p-3.5 flex items-center gap-2">
+            <span class="font-bold theme-text-accent shrink-0">3. Nơi dự lễ:</span>
+            <span class="theme-text-primary font-medium">Khu Hội Trường A (HTA - Màu tím)</span>
           </div>
         </div>
       </div>
@@ -604,7 +583,14 @@ export class InvitationWebOverlay {
   public render(): void {
     const cd = calculateCountdown(Date.now());
     const rsvpStats = computeRsvpStats(this.rsvpEntries);
-    const displayGuestName = this.guestName.trim() || 'Quý khách';
+    const isDefaultAdminName =
+      this.isAdminMode &&
+      (this.guestName.trim() === '' ||
+        this.guestName === 'Quý khách' ||
+        this.guestName === 'Ngọc Thoa');
+    const displayGuestName = isDefaultAdminName
+      ? 'Ngọc Thoa'
+      : this.guestName.trim() || 'Quý khách';
     const themeIcon = this.theme === 'light' ? '🌙 Tối' : '☀️ Sáng';
 
     // 1. Envelope Opening Screen (Hover nudges & peeks open -> Click flies card out & fills screen)
@@ -655,7 +641,7 @@ export class InvitationWebOverlay {
             <!-- Front Envelope Pocket (Lower 64% - Never overlapped by the top flap!) -->
             <div class="envelope-pocket">
               <p class="text-xs sm:text-sm uppercase tracking-widest font-semibold theme-text-muted mb-1.5">
-                Trân trọng kính mời
+                ${isDefaultAdminName ? 'Chủ thiệp • Quản trị viên' : 'Trân trọng kính mời'}
               </p>
               <p class="font-serif-editorial text-2xl sm:text-4xl font-bold theme-text-accent leading-tight mb-2 px-2">
                 ${this.escapeHtml(displayGuestName)}
@@ -723,67 +709,82 @@ export class InvitationWebOverlay {
               ? `
           <section id="host-admin-dashboard"
                    class="rounded-3xl theme-card p-5 sm:p-7">
-            <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-theme">
-              <h3 class="font-serif-editorial text-xl sm:text-2xl font-bold theme-text-primary">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-5 pb-4 border-b border-theme">
+              <h3 class="font-serif-editorial text-2xl sm:text-3xl font-bold theme-text-primary">
                 Quản Lý Danh Sách Thiệp Mời & Thống Kê
               </h3>
 
               <div class="flex flex-wrap items-center gap-2">
                 <button id="btn-sync-json-db"
-                        class="btn-secondary px-3 py-1.5 rounded-xl text-xs cursor-pointer">
+                        class="btn-secondary px-3.5 py-2 rounded-xl text-xs sm:text-sm cursor-pointer">
                   Làm mới
                 </button>
                 <button id="btn-export-json-db"
-                        class="btn-secondary px-3 py-1.5 rounded-xl text-xs cursor-pointer">
+                        class="btn-secondary px-3.5 py-2 rounded-xl text-xs sm:text-sm cursor-pointer">
                   Tải danh sách
                 </button>
                 <label for="input-import-json-db"
-                       class="btn-secondary px-3 py-1.5 rounded-xl text-xs cursor-pointer">
+                       class="btn-secondary px-3.5 py-2 rounded-xl text-xs sm:text-sm cursor-pointer">
                   Nhập danh sách
                 </label>
                 <input id="input-import-json-db" type="file" accept=".json,application/json" class="hidden" />
               </div>
             </div>
 
-            <!-- Live Admin RSVP & Attendance Summary Row -->
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-              <div class="rounded-2xl theme-card-subtle p-3.5">
-                <p class="text-[11px] uppercase tracking-wider theme-text-muted font-semibold">Tổng Danh Sách Thiệp</p>
-                <p class="font-mono-code text-xl sm:text-2xl font-bold theme-text-primary mt-0.5">
-                  ${this.invitedGuestList.length} <span class="text-xs font-normal theme-text-secondary">thiệp</span>
-                </p>
+            <!-- Live Admin RSVP & Attendance Summary Row (Separated & Elevated) -->
+            <div class="admin-stat-grid">
+              <div class="admin-stat-card">
+                <div>
+                  <p class="text-xs uppercase tracking-wider theme-text-muted font-bold">Tổng Danh Sách Thiệp</p>
+                  <p class="font-mono-code text-2xl sm:text-3xl font-bold theme-text-primary mt-1">
+                    ${this.invitedGuestList.length} <span class="text-xs sm:text-sm font-semibold theme-text-secondary">thiệp</span>
+                  </p>
+                </div>
+                <div class="admin-stat-icon">🎟️</div>
               </div>
-              <div class="rounded-2xl theme-card-subtle p-3.5">
-                <p class="text-[11px] uppercase tracking-wider theme-text-muted font-semibold">Đã Phản Hồi</p>
-                <p class="font-mono-code text-xl sm:text-2xl font-bold theme-text-accent mt-0.5">
-                  ${rsvpStats.totalResponses} <span class="text-xs font-normal theme-text-secondary">lượt</span>
-                </p>
+
+              <div class="admin-stat-card">
+                <div>
+                  <p class="text-xs uppercase tracking-wider theme-text-muted font-bold">Đã Phản Hồi</p>
+                  <p class="font-mono-code text-2xl sm:text-3xl font-bold theme-text-accent mt-1">
+                    ${rsvpStats.totalResponses} <span class="text-xs sm:text-sm font-semibold theme-text-secondary">lượt</span>
+                  </p>
+                </div>
+                <div class="admin-stat-icon">📬</div>
               </div>
-              <div class="rounded-2xl theme-card-subtle p-3.5">
-                <p class="text-[11px] uppercase tracking-wider theme-text-muted font-semibold">Tham Dự Lễ</p>
-                <p class="font-mono-code text-xl sm:text-2xl font-bold theme-text-primary mt-0.5">
-                  ${rsvpStats.attendingCeremonyCount} <span class="text-xs font-normal theme-text-secondary">khách/nhóm</span>
-                </p>
+
+              <div class="admin-stat-card">
+                <div>
+                  <p class="text-xs uppercase tracking-wider theme-text-muted font-bold">Tham Dự Lễ</p>
+                  <p class="font-mono-code text-2xl sm:text-3xl font-bold theme-text-primary mt-1">
+                    ${rsvpStats.attendingCeremonyCount} <span class="text-xs sm:text-sm font-semibold theme-text-secondary">khách/nhóm</span>
+                  </p>
+                </div>
+                <div class="admin-stat-icon">🎓</div>
               </div>
-              <div class="rounded-2xl theme-card-subtle p-3.5">
-                <p class="text-[11px] uppercase tracking-wider theme-text-muted font-semibold">Gửi Lời Chúc</p>
-                <p class="font-mono-code text-xl sm:text-2xl font-bold theme-text-gold mt-0.5">
-                  ${rsvpStats.remoteWishesCount} <span class="text-xs font-normal theme-text-secondary">lời chúc</span>
-                </p>
+
+              <div class="admin-stat-card">
+                <div>
+                  <p class="text-xs uppercase tracking-wider theme-text-muted font-bold">Gửi Lời Chúc</p>
+                  <p class="font-mono-code text-2xl sm:text-3xl font-bold theme-text-gold mt-1">
+                    ${rsvpStats.remoteWishesCount} <span class="text-xs sm:text-sm font-semibold theme-text-secondary">lời chúc</span>
+                  </p>
+                </div>
+                <div class="admin-stat-icon">💌</div>
               </div>
             </div>
 
-            <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <div class="lg:col-span-5 space-y-3">
-                <div class="rounded-2xl theme-card-subtle p-3.5 space-y-2.5">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              <div class="lg:col-span-5 space-y-4">
+                <div class="rounded-2xl theme-card-subtle p-4 space-y-3">
                   <div class="flex gap-2">
                     <input id="input-guest-name"
                            type="text"
-                           value="${this.guestName === 'Quý khách' ? '' : this.escapeHtml(this.guestName)}"
+                           value="${isDefaultAdminName ? '' : this.escapeHtml(this.guestName)}"
                            placeholder="Nhập tên khách mời..."
-                           class="flex-1 px-3 py-2 rounded-xl theme-input text-sm" />
+                           class="flex-1 px-3.5 py-2.5 rounded-xl theme-input text-sm font-semibold" />
                     <button id="btn-add-single-guest"
-                            class="btn-primary px-3.5 py-2 rounded-xl text-xs shrink-0 cursor-pointer">
+                            class="btn-primary px-4 py-2.5 rounded-xl text-xs sm:text-sm shrink-0 cursor-pointer">
                       + Thêm
                     </button>
                   </div>
@@ -1052,33 +1053,33 @@ export class InvitationWebOverlay {
                 <h2 class="font-serif-editorial text-2xl sm:text-4xl font-bold theme-text-accent leading-tight mb-2">
                   Lễ Tốt Nghiệp — ${GRADUATION_INFO.graduateName}
                 </h2>
-                <p class="text-sm sm:text-lg theme-text-secondary leading-relaxed mb-4">
+                <p class="text-base sm:text-xl theme-text-secondary leading-relaxed mb-5">
                   Trân trọng kính mời <strong class="theme-text-accent">${this.escapeHtml(displayGuestName)}</strong> đến tham dự Lễ Tốt Nghiệp và chung vui cùng Thoa.
                 </p>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                  <div class="rounded-2xl theme-card-subtle p-4 flex items-start gap-3">
-                    <div class="w-9 h-9 rounded-xl theme-badge flex items-center justify-center text-base shrink-0">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                  <div class="rounded-2xl theme-card-subtle p-4 sm:p-5 flex items-start gap-3.5">
+                    <div class="w-10 h-10 rounded-xl theme-badge flex items-center justify-center text-lg shrink-0">
                       🗓️
                     </div>
                     <div>
-                      <p class="text-[11px] uppercase tracking-wider theme-text-muted">Thời Gian</p>
-                      <p class="font-mono-code text-base sm:text-lg font-bold theme-text-primary mt-0.5">
+                      <p class="text-xs sm:text-sm uppercase tracking-wider theme-text-muted font-bold">Thời Gian</p>
+                      <p class="font-mono-code text-lg sm:text-2xl font-bold theme-text-primary mt-1">
                         ${GRADUATION_INFO.dateDisplay} | ${GRADUATION_INFO.timeDisplay}
                       </p>
                     </div>
                   </div>
 
-                  <div class="rounded-2xl theme-card-subtle p-4 flex items-start gap-3">
-                    <div class="w-9 h-9 rounded-xl theme-badge flex items-center justify-center text-base shrink-0">
+                  <div class="rounded-2xl theme-card-subtle p-4 sm:p-5 flex items-start gap-3.5">
+                    <div class="w-10 h-10 rounded-xl theme-badge flex items-center justify-center text-lg shrink-0">
                       📍
                     </div>
                     <div>
-                      <p class="text-[11px] uppercase tracking-wider theme-text-muted">Địa Điểm</p>
-                      <p class="font-serif-editorial text-base sm:text-lg font-bold theme-text-primary mt-0.5">
+                      <p class="text-xs sm:text-sm uppercase tracking-wider theme-text-muted font-bold">Địa Điểm</p>
+                      <p class="font-serif-editorial text-lg sm:text-2xl font-bold theme-text-primary mt-1 leading-tight">
                         ${GRADUATION_INFO.hallName} (Khu HTA — Rẽ phải từ cổng chính)
                       </p>
-                      <p class="text-xs theme-text-secondary">${GRADUATION_INFO.addressLine}</p>
+                      <p class="text-sm sm:text-base theme-text-secondary font-medium mt-1">${GRADUATION_INFO.addressLine}</p>
                     </div>
                   </div>
                 </div>
@@ -1178,7 +1179,7 @@ export class InvitationWebOverlay {
                     <input id="rsvp-name"
                            type="text"
                            required
-                           value="${this.guestName === 'Quý khách' ? '' : this.escapeHtml(this.guestName)}"
+                           value="${isDefaultAdminName ? '' : this.escapeHtml(this.guestName)}"
                            placeholder="Tên của bạn..."
                            class="px-3 py-2.5 rounded-xl theme-input text-xs sm:text-sm font-semibold" />
                     <input id="rsvp-relation"
@@ -1293,7 +1294,11 @@ export class InvitationWebOverlay {
 
   private getShareableLink(): string {
     const baseUrl = `${window.location.origin}${window.location.pathname}`;
-    const cleanGuest = this.guestName === 'Quý khách' ? '' : this.guestName;
+    const isDefaultAdmin =
+      this.isAdminMode &&
+      (this.guestName === 'Ngọc Thoa' || this.guestName === 'Quý khách');
+    const cleanGuest =
+      this.guestName === 'Quý khách' || isDefaultAdmin ? '' : this.guestName;
     return buildPersonalizedShareUrl(baseUrl, cleanGuest);
   }
 
@@ -1346,14 +1351,7 @@ export class InvitationWebOverlay {
           db.guestList.length > 0 ? db.guestList : this.invitedGuestList;
         this.rsvpEntries = db.rsvpEntries;
         this.render();
-        this.showToast('Đã quay về Hệ Thống Quản Trị Chủ Thiệp');
-      });
-
-    document
-      .getElementById('btn-view-original-map')
-      ?.addEventListener('click', () => {
-        soundEngine.playSoftClick();
-        this.openOriginalMapModal();
+        this.showToast('Đã quay về Quản Trị');
       });
 
     document
@@ -1401,7 +1399,8 @@ export class InvitationWebOverlay {
       ) as HTMLInputElement | null;
 
       const applyGuestNameChange = (newName: string) => {
-        const cleaned = newName.trim() || 'Quý khách';
+        const cleaned =
+          newName.trim() || (this.isAdminMode ? 'Ngọc Thoa' : 'Quý khách');
         this.guestName = cleaned;
         void this.refreshPersonalizedPosterPreview();
 
