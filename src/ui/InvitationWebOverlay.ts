@@ -6,6 +6,8 @@ import {
   canAccessHostLinkGenerator,
   parseGuestListText,
   calculateCountdown,
+  computeRsvpStats,
+  findRsvpForInvitedGuest,
   buildPersonalizedShareUrl,
   generateIcsCalendarContent,
   formatAttendanceLabel,
@@ -17,11 +19,16 @@ import {
 import {
   loadGraduationDatabase,
   saveGraduationDatabase,
+  saveAdminGuestList,
+  submitGuestRsvpEntry,
+  deleteRsvpEntryFromDatabase,
+  subscribeToDatabaseChanges,
   exportDatabaseAsJsonFile,
 } from '../services/jsonDatabase';
 import { soundEngine } from '../utils/soundEffects';
 
 const THEME_STORAGE_KEY = 'ngoc_thoa_grad_theme';
+const HOST_PREVIEW_SESSION_KEY = 'ngoc_thoa_host_preview_session';
 
 export class InvitationWebOverlay {
   private container: HTMLElement;
@@ -31,13 +38,17 @@ export class InvitationWebOverlay {
   private theme: 'light' | 'dark' = 'light';
   private guestName = 'Quý khách';
   private isAdminMode = true;
+  private isHostPreviewingGuest = false;
   private invitedGuestList: string[] = [...DEFAULT_INVITED_GUEST_LIST];
   private rsvpEntries: RsvpEntry[] = [];
   private countdownTimerId: number | null = null;
+  private unsubscribeDbSync: (() => void) | null = null;
   private posterCanvas: HTMLCanvasElement;
   private posterPreviewDataUrl: string = GRADUATION_INFO.posterAssetPath;
   private photoboothThumbs: Map<number, string> = new Map();
   private toastTimeoutId: number | null = null;
+  private editingGuestIndex: number | null = null;
+  private editingRsvpId: string | null = null;
 
   constructor() {
     this.posterCanvas = document.createElement('canvas');
@@ -64,6 +75,17 @@ export class InvitationWebOverlay {
     }
     this.isAdminMode = canAccessHostLinkGenerator(window.location.search);
 
+    try {
+      if (this.isAdminMode) {
+        window.sessionStorage.setItem(HOST_PREVIEW_SESSION_KEY, '1');
+      }
+      this.isHostPreviewingGuest =
+        !this.isAdminMode &&
+        window.sessionStorage.getItem(HOST_PREVIEW_SESSION_KEY) === '1';
+    } catch {
+      this.isHostPreviewingGuest = false;
+    }
+
     if (params.get('autostart') === '1' || params.get('open') === '1') {
       this.isEnvelopeOpened = true;
     }
@@ -71,6 +93,46 @@ export class InvitationWebOverlay {
     this.render();
     this.startCountdownLoop();
     void this.initializeDataAndAssets();
+    this.setupRealtimeDatabaseSubscription();
+  }
+
+  private setupRealtimeDatabaseSubscription(): void {
+    this.unsubscribeDbSync?.();
+    this.unsubscribeDbSync = subscribeToDatabaseChanges((updatedDb) => {
+      const prevRsvpCount = this.rsvpEntries.length;
+      const prevLatestId = this.rsvpEntries[0]?.id;
+      const newLatest = updatedDb.rsvpEntries[0];
+
+      const rsvpChanged =
+        updatedDb.rsvpEntries.length !== prevRsvpCount ||
+        newLatest?.id !== prevLatestId;
+      const guestsChanged =
+        updatedDb.guestList.length !== this.invitedGuestList.length;
+
+      if (!rsvpChanged && !guestsChanged) return;
+
+      if (updatedDb.guestList.length > 0) {
+        this.invitedGuestList = updatedDb.guestList;
+      }
+      this.rsvpEntries = updatedDb.rsvpEntries;
+
+      // Avoid interrupting the user if they are actively typing in an input or textarea
+      const activeTag = document.activeElement?.tagName.toLowerCase();
+      const isTyping = activeTag === 'input' || activeTag === 'textarea';
+      if (!isTyping && this.isEnvelopeOpened) {
+        this.render();
+      }
+
+      if (
+        rsvpChanged &&
+        updatedDb.rsvpEntries.length > prevRsvpCount &&
+        newLatest
+      ) {
+        this.showToast(
+          `🎉 Đã nhận xác nhận & lời chúc mới từ ${newLatest.guestName}!`,
+        );
+      }
+    });
   }
 
   private applyThemeToDocument(): void {
@@ -92,17 +154,18 @@ export class InvitationWebOverlay {
   private async initializeDataAndAssets(): Promise<void> {
     try {
       const db = await loadGraduationDatabase();
-      // Repair any legacy comma-split fragments ("Team tiếng Trung (ĐA" / "Bi)") if present
+      // Always preserve loaded rsvpEntries FIRST before any guestList repair
+      this.rsvpEntries = db.rsvpEntries;
+
       const hasLegacyBrokenFragment = db.guestList.some(
         (item) => item === 'Team tiếng Trung (ĐA' || item === 'Bi)',
       );
       if (db.guestList.length === 0 || hasLegacyBrokenFragment) {
         this.invitedGuestList = [...DEFAULT_INVITED_GUEST_LIST];
-        await this.persistDatabase();
+        await saveAdminGuestList(this.invitedGuestList);
       } else {
         this.invitedGuestList = db.guestList;
       }
-      this.rsvpEntries = db.rsvpEntries;
       this.render();
     } catch {
       // Fallback handled inside jsonDatabase
@@ -118,12 +181,28 @@ export class InvitationWebOverlay {
     }
   }
 
-  private async persistDatabase(): Promise<void> {
-    await saveGraduationDatabase({
-      guestList: this.invitedGuestList,
-      rsvpEntries: this.rsvpEntries,
-      updatedAt: new Date().toISOString(),
-    });
+  private renderGuestRsvpStatusBadge(guestName: string): string {
+    const matched = findRsvpForInvitedGuest(guestName, this.rsvpEntries);
+    if (!matched) {
+      return `<span class="px-2 py-0.5 rounded-full text-[10px] theme-input theme-text-muted shrink-0">Chưa xác nhận</span>`;
+    }
+    if (matched.attendance === 'attending') {
+      return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold status-badge-attending shrink-0">✓ Dự lễ 11h30</span>`;
+    }
+    if (matched.attendance === 'after_ceremony') {
+      return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold status-badge-photo shrink-0">📸 Chụp 12h15</span>`;
+    }
+    return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold status-badge-wish shrink-0">💌 Đã chúc</span>`;
+  }
+
+  private renderAttendancePill(status: AttendanceStatus): string {
+    if (status === 'attending') {
+      return `<span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold status-badge-attending">${this.escapeHtml(formatAttendanceLabel(status))}</span>`;
+    }
+    if (status === 'after_ceremony') {
+      return `<span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold status-badge-photo">${this.escapeHtml(formatAttendanceLabel(status))}</span>`;
+    }
+    return `<span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold status-badge-wish">${this.escapeHtml(formatAttendanceLabel(status))}</span>`;
   }
 
   private async refreshPersonalizedPosterPreview(): Promise<void> {
@@ -524,6 +603,7 @@ export class InvitationWebOverlay {
 
   public render(): void {
     const cd = calculateCountdown(Date.now());
+    const rsvpStats = computeRsvpStats(this.rsvpEntries);
     const displayGuestName = this.guestName.trim() || 'Quý khách';
     const themeIcon = this.theme === 'light' ? '🌙 Tối' : '☀️ Sáng';
 
@@ -610,8 +690,19 @@ export class InvitationWebOverlay {
     // 2. Pure Web Graduation Invitation Page (No top header, wide 1520px layout, floating bottom-right controls)
     this.container.innerHTML = `
       <div class="theme-page min-h-screen pb-20 web-page-reveal">
-        <!-- Floating Bottom-Right Controls (Replay Envelope + Light/Dark Toggle) -->
+        <!-- Floating Bottom-Right Controls (Return to Admin if previewing + Replay Envelope + Light/Dark Toggle) -->
         <div class="floating-bottom-dock">
+          ${
+            !this.isAdminMode && this.isHostPreviewingGuest
+              ? `
+            <button id="btn-return-to-admin"
+                    class="floating-dock-btn"
+                    title="Quay lại Hệ Thống Quản Trị của Chủ Thiệp">
+              <span>🛡️ Về Quản Trị</span>
+            </button>
+          `
+              : ''
+          }
           <button id="btn-replay-envelope"
                   class="floating-dock-btn"
                   title="Mở lại phong bì thiệp mời">
@@ -634,19 +725,51 @@ export class InvitationWebOverlay {
                    class="rounded-3xl theme-card p-5 sm:p-7">
             <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-theme">
               <h3 class="font-serif-editorial text-xl sm:text-2xl font-bold theme-text-primary">
-                Tạo & Quản Lý Danh Sách Thiệp Mời
+                Quản Lý Danh Sách Thiệp Mời & Thống Kê
               </h3>
 
               <div class="flex flex-wrap items-center gap-2">
+                <button id="btn-sync-json-db"
+                        class="btn-secondary px-3 py-1.5 rounded-xl text-xs cursor-pointer">
+                  Làm mới
+                </button>
                 <button id="btn-export-json-db"
                         class="btn-secondary px-3 py-1.5 rounded-xl text-xs cursor-pointer">
-                  Tải JSON
+                  Tải danh sách
                 </button>
                 <label for="input-import-json-db"
                        class="btn-secondary px-3 py-1.5 rounded-xl text-xs cursor-pointer">
-                  Nhập JSON
+                  Nhập danh sách
                 </label>
                 <input id="input-import-json-db" type="file" accept=".json,application/json" class="hidden" />
+              </div>
+            </div>
+
+            <!-- Live Admin RSVP & Attendance Summary Row -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+              <div class="rounded-2xl theme-card-subtle p-3.5">
+                <p class="text-[11px] uppercase tracking-wider theme-text-muted font-semibold">Tổng Danh Sách Thiệp</p>
+                <p class="font-mono-code text-xl sm:text-2xl font-bold theme-text-primary mt-0.5">
+                  ${this.invitedGuestList.length} <span class="text-xs font-normal theme-text-secondary">thiệp</span>
+                </p>
+              </div>
+              <div class="rounded-2xl theme-card-subtle p-3.5">
+                <p class="text-[11px] uppercase tracking-wider theme-text-muted font-semibold">Đã Phản Hồi</p>
+                <p class="font-mono-code text-xl sm:text-2xl font-bold theme-text-accent mt-0.5">
+                  ${rsvpStats.totalResponses} <span class="text-xs font-normal theme-text-secondary">lượt</span>
+                </p>
+              </div>
+              <div class="rounded-2xl theme-card-subtle p-3.5">
+                <p class="text-[11px] uppercase tracking-wider theme-text-muted font-semibold">Tham Dự Lễ</p>
+                <p class="font-mono-code text-xl sm:text-2xl font-bold theme-text-primary mt-0.5">
+                  ${rsvpStats.attendingCeremonyCount} <span class="text-xs font-normal theme-text-secondary">khách/nhóm</span>
+                </p>
+              </div>
+              <div class="rounded-2xl theme-card-subtle p-3.5">
+                <p class="text-[11px] uppercase tracking-wider theme-text-muted font-semibold">Gửi Lời Chúc</p>
+                <p class="font-mono-code text-xl sm:text-2xl font-bold theme-text-gold mt-0.5">
+                  ${rsvpStats.remoteWishesCount} <span class="text-xs font-normal theme-text-secondary">lời chúc</span>
+                </p>
               </div>
             </div>
 
@@ -687,7 +810,7 @@ export class InvitationWebOverlay {
                 <div class="rounded-2xl theme-card-subtle p-3.5 space-y-2">
                   <textarea id="textarea-bulk-guests"
                             rows="3"
-                            placeholder="Dán danh sách tên khách mời (mỗi dòng 1 thiệp, giữ nguyên dấu phẩy và ngoặc đơn trên cùng 1 dòng)..."
+                            placeholder="Dán danh sách tên khách mời (mỗi dòng 1 tên)..."
                             class="w-full px-3 py-2 rounded-xl theme-input text-xs"></textarea>
                   <div class="flex items-center justify-between gap-2">
                     <button id="btn-import-bulk-guests"
@@ -708,7 +831,7 @@ export class InvitationWebOverlay {
 
               <div class="lg:col-span-7 rounded-2xl theme-card-subtle p-3.5 flex flex-col justify-between">
                 <div>
-                  <div class="flex items-center justify-between mb-2.5">
+                  <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
                     <span class="text-xs font-semibold uppercase tracking-wider theme-text-accent">
                       Danh sách khách mời (${this.invitedGuestList.length})
                     </span>
@@ -724,10 +847,30 @@ export class InvitationWebOverlay {
                     </div>
                     `
                       : `
-                    <div id="quick-guest-roster" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[240px] overflow-y-auto custom-scrollbar p-1">
+                    <div id="quick-guest-roster" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[250px] overflow-y-auto custom-scrollbar p-1">
                       ${this.invitedGuestList
                         .map((name, idx) => {
                           const isSelected = name === this.guestName;
+                          const isEditing = this.editingGuestIndex === idx;
+                          if (isEditing) {
+                            return `
+                            <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border theme-badge border-strong">
+                              <input id="input-edit-guest-${idx}"
+                                     type="text"
+                                     value="${this.escapeHtml(name)}"
+                                     class="flex-1 min-w-0 px-2 py-1 rounded-lg theme-input text-xs font-semibold" />
+                              <button type="button"
+                                      data-save-guest-index="${idx}"
+                                      class="quick-guest-save-edit px-2.5 py-1 rounded-lg btn-primary text-[10px] shrink-0 cursor-pointer">
+                                Lưu
+                              </button>
+                              <button type="button"
+                                      class="quick-guest-cancel-edit px-2 py-1 rounded-lg btn-secondary text-[10px] shrink-0 cursor-pointer">
+                                Hủy
+                              </button>
+                            </div>
+                          `;
+                          }
                           return `
                           <div class="flex items-center justify-between gap-1.5 px-3 py-2 rounded-xl border ${
                             isSelected
@@ -741,14 +884,23 @@ export class InvitationWebOverlay {
                                     }">
                               ${idx + 1}. ${this.escapeHtml(name)}
                             </button>
+                            ${this.renderGuestRsvpStatusBadge(name)}
+                            <button type="button"
+                                    data-edit-guest-index="${idx}"
+                                    title="Đổi tên khách mời"
+                                    class="quick-guest-edit px-2 py-1 rounded-lg btn-secondary text-[10px] shrink-0 cursor-pointer">
+                              Sửa
+                            </button>
                             <button type="button"
                                     data-copy-guest="${this.escapeHtml(name)}"
-                                    class="quick-guest-copy px-2 py-1 rounded-lg btn-secondary text-[10px] shrink-0">
+                                    title="Copy link thiệp"
+                                    class="quick-guest-copy px-2 py-1 rounded-lg btn-secondary text-[10px] shrink-0 cursor-pointer">
                               Copy
                             </button>
                             <button type="button"
                                     data-delete-guest-index="${idx}"
-                                    class="quick-guest-delete px-2 py-1 rounded-lg theme-text-muted text-[10px] shrink-0">
+                                    title="Xóa khách mời"
+                                    class="quick-guest-delete px-1.5 py-1 rounded-lg theme-text-muted text-[10px] shrink-0 cursor-pointer">
                               ✕
                             </button>
                           </div>
@@ -760,6 +912,102 @@ export class InvitationWebOverlay {
                   }
                 </div>
               </div>
+            </div>
+
+            <!-- Admin Table of Received RSVP Confirmations & Wishes -->
+            <div class="mt-4 pt-4 border-t border-theme">
+              <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                <span class="text-xs font-bold uppercase tracking-wider theme-text-accent">
+                  Danh Sách Phản Hồi & Lời Chúc (${this.rsvpEntries.length})
+                </span>
+              </div>
+
+              ${
+                this.rsvpEntries.length === 0
+                  ? `
+                <div class="rounded-2xl theme-card-subtle p-4 text-center">
+                  <p class="text-xs sm:text-sm theme-text-muted">
+                    Chưa có lời chúc hoặc xác nhận tham dự nào.
+                  </p>
+                </div>
+              `
+                  : `
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[260px] overflow-y-auto custom-scrollbar p-1">
+                  ${this.rsvpEntries
+                    .map((entry) => {
+                      const isEditingRsvp = this.editingRsvpId === entry.id;
+                      if (isEditingRsvp) {
+                        return `
+                        <div class="rounded-2xl theme-card-subtle p-3 space-y-2 border border-strong">
+                          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input id="edit-rsvp-name-${this.escapeHtml(entry.id)}"
+                                   type="text"
+                                   value="${this.escapeHtml(entry.guestName)}"
+                                   placeholder="Tên khách mời"
+                                   class="px-2.5 py-1.5 rounded-lg theme-input text-xs font-semibold" />
+                            <select id="edit-rsvp-att-${this.escapeHtml(entry.id)}"
+                                    class="px-2.5 py-1.5 rounded-lg theme-input text-xs font-semibold">
+                              <option value="attending" ${entry.attendance === 'attending' ? 'selected' : ''}>✓ Dự lễ 11h30</option>
+                              <option value="after_ceremony" ${entry.attendance === 'after_ceremony' ? 'selected' : ''}>📸 Chụp 12h15</option>
+                              <option value="remote_wish" ${entry.attendance === 'remote_wish' ? 'selected' : ''}>💌 Gửi lời chúc</option>
+                            </select>
+                          </div>
+                          <textarea id="edit-rsvp-msg-${this.escapeHtml(entry.id)}"
+                                    rows="2"
+                                    class="w-full px-2.5 py-1.5 rounded-lg theme-input text-xs">${this.escapeHtml(entry.message)}</textarea>
+                          <div class="flex items-center justify-end gap-1.5">
+                            <button type="button"
+                                    data-save-rsvp-id="${this.escapeHtml(entry.id)}"
+                                    class="admin-save-rsvp px-3 py-1 rounded-lg btn-primary text-[11px] cursor-pointer">
+                              Lưu
+                            </button>
+                            <button type="button"
+                                    class="admin-cancel-rsvp px-2.5 py-1 rounded-lg btn-secondary text-[11px] cursor-pointer">
+                              Hủy
+                            </button>
+                          </div>
+                        </div>
+                        `;
+                      }
+                      return `
+                    <div class="rounded-2xl theme-card-subtle p-3 flex items-start justify-between gap-2">
+                      <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-center gap-1.5 mb-1">
+                          <span class="font-bold text-xs sm:text-sm theme-text-accent">
+                            ${this.escapeHtml(entry.guestName)}
+                          </span>
+                          <span class="text-[11px] theme-text-muted">
+                            • ${this.escapeHtml(entry.relation)} (${this.escapeHtml(entry.createdAt)})
+                          </span>
+                        </div>
+                        <div class="mb-1">
+                          ${this.renderAttendancePill(entry.attendance)}
+                        </div>
+                        <p class="text-xs theme-text-primary leading-relaxed">
+                          “${this.escapeHtml(entry.message)}”
+                        </p>
+                      </div>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button type="button"
+                                data-edit-rsvp-id="${this.escapeHtml(entry.id)}"
+                                title="Chỉnh sửa phản hồi"
+                                class="admin-edit-rsvp px-2 py-1 rounded-lg btn-secondary text-[10px] cursor-pointer">
+                          Sửa
+                        </button>
+                        <button type="button"
+                                data-delete-rsvp-id="${this.escapeHtml(entry.id)}"
+                                title="Xóa phản hồi"
+                                class="admin-delete-rsvp px-2 py-1 rounded-lg theme-input text-[11px] theme-text-muted cursor-pointer">
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  `;
+                    })
+                    .join('')}
+                </div>
+              `
+              }
             </div>
           </section>
           `
@@ -916,12 +1164,12 @@ export class InvitationWebOverlay {
 
               <!-- Card 3: Guestbook & Attendance Confirmation -->
               <section class="rounded-3xl theme-card p-5 sm:p-6">
-                <div class="flex items-center justify-between gap-2 mb-3">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <h3 class="font-serif-editorial text-xl sm:text-2xl font-bold theme-text-primary">
                     Gửi Lời Chúc & Xác Nhận Tham Dự
                   </h3>
-                  <span class="px-2.5 py-1 rounded-full text-xs theme-badge font-mono-code">
-                    ${this.rsvpEntries.length}
+                  <span class="px-3 py-1 rounded-full text-xs theme-badge font-mono-code font-bold">
+                    ${this.rsvpEntries.length} lời chúc
                   </span>
                 </div>
 
@@ -932,16 +1180,16 @@ export class InvitationWebOverlay {
                            required
                            value="${this.guestName === 'Quý khách' ? '' : this.escapeHtml(this.guestName)}"
                            placeholder="Tên của bạn..."
-                           class="px-3 py-2.5 rounded-xl theme-input text-xs sm:text-sm" />
+                           class="px-3 py-2.5 rounded-xl theme-input text-xs sm:text-sm font-semibold" />
                     <input id="rsvp-relation"
                            type="text"
-                           placeholder="Mối quan hệ (Bạn bè, Gia đình...)"
+                           placeholder="Mối quan hệ (Bạn bè, Gia đình, Đồng nghiệp...)"
                            class="px-3 py-2.5 rounded-xl theme-input text-xs sm:text-sm" />
                     <select id="rsvp-attendance"
-                            class="px-3 py-2.5 rounded-xl theme-input text-xs sm:text-sm">
-                      <option value="attending">Tham dự lúc 11h30</option>
-                      <option value="after_ceremony">Ghé chụp hình lúc 12h15</option>
-                      <option value="remote_wish">Gửi lời chúc từ xa</option>
+                            class="px-3 py-2.5 rounded-xl theme-input text-xs sm:text-sm font-semibold">
+                      <option value="attending">✓ Tham dự lúc 11h30 tại Hội trường A</option>
+                      <option value="after_ceremony">📸 Ghé chụp hình lúc 12h15</option>
+                      <option value="remote_wish">💌 Gửi lời chúc từ xa</option>
                     </select>
                   </div>
 
@@ -949,11 +1197,11 @@ export class InvitationWebOverlay {
                     <textarea id="rsvp-message"
                               rows="2"
                               required
-                              placeholder="Lời chúc gửi đến Ngọc Thoa..."
+                              placeholder="Viết lời chúc tốt nghiệp gửi đến Ngọc Thoa..."
                               class="flex-1 px-3 py-2.5 rounded-xl theme-input text-xs sm:text-sm"></textarea>
                     <button type="submit"
                             class="btn-primary px-5 py-2.5 rounded-xl text-xs sm:text-sm shrink-0 cursor-pointer">
-                      Gửi Lời Chúc
+                      💌 Gửi Lời Chúc & Xác Nhận
                     </button>
                   </div>
                 </form>
@@ -967,17 +1215,27 @@ export class InvitationWebOverlay {
                       (entry) => `
                     <div class="rounded-2xl theme-card-subtle p-3.5">
                       <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
-                        <div class="flex items-center gap-2">
+                        <div class="flex flex-wrap items-center gap-2">
                           <span class="font-bold text-xs sm:text-sm theme-text-accent">
                             ${this.escapeHtml(entry.guestName)}
                           </span>
                           <span class="text-[11px] theme-text-muted">
-                            • ${this.escapeHtml(entry.relation)}
+                            • ${this.escapeHtml(entry.relation)} (${this.escapeHtml(entry.createdAt)})
                           </span>
                         </div>
-                        <span class="text-[10px] px-2 py-0.5 rounded-full theme-badge">
-                          ${this.escapeHtml(formatAttendanceLabel(entry.attendance))}
-                        </span>
+                        <div class="flex items-center gap-2">
+                          ${this.renderAttendancePill(entry.attendance)}
+                          ${
+                            this.isAdminMode
+                              ? `<button type="button"
+                                         data-delete-rsvp-id="${this.escapeHtml(entry.id)}"
+                                         title="Xóa lời chúc này"
+                                         class="admin-delete-rsvp px-2 py-0.5 rounded-lg theme-input text-[10px] theme-text-muted cursor-pointer">
+                                  ✕
+                                </button>`
+                              : ''
+                          }
+                        </div>
                       </div>
                       <p class="text-xs sm:text-sm theme-text-primary leading-relaxed">
                         “${this.escapeHtml(entry.message)}”
@@ -1076,6 +1334,22 @@ export class InvitationWebOverlay {
       });
 
     document
+      .getElementById('btn-return-to-admin')
+      ?.addEventListener('click', async () => {
+        soundEngine.playSoftClick();
+        const adminUrl = `${window.location.origin}${window.location.pathname}?autostart=1`;
+        window.history.pushState({}, '', adminUrl);
+        this.isAdminMode = true;
+        this.isHostPreviewingGuest = false;
+        const db = await loadGraduationDatabase();
+        this.invitedGuestList =
+          db.guestList.length > 0 ? db.guestList : this.invitedGuestList;
+        this.rsvpEntries = db.rsvpEntries;
+        this.render();
+        this.showToast('Đã quay về Hệ Thống Quản Trị Chủ Thiệp');
+      });
+
+    document
       .getElementById('btn-view-original-map')
       ?.addEventListener('click', () => {
         soundEngine.playSoftClick();
@@ -1108,6 +1382,19 @@ export class InvitationWebOverlay {
         }
       });
 
+    document.querySelectorAll('.admin-delete-rsvp').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!this.isAdminMode) return;
+        const id = (btn as HTMLElement).getAttribute('data-delete-rsvp-id');
+        if (!id) return;
+        soundEngine.playSoftClick();
+        const saved = await deleteRsvpEntryFromDatabase(id);
+        this.rsvpEntries = saved.rsvpEntries;
+        this.render();
+        this.showToast('Đã xóa phản hồi');
+      });
+    });
+
     if (this.isAdminMode) {
       const nameInput = document.getElementById(
         'input-guest-name',
@@ -1129,6 +1416,21 @@ export class InvitationWebOverlay {
       });
 
       document
+        .getElementById('btn-sync-json-db')
+        ?.addEventListener('click', async () => {
+          soundEngine.playSoftClick();
+          const db = await loadGraduationDatabase();
+          if (db.guestList.length > 0) {
+            this.invitedGuestList = db.guestList;
+          }
+          this.rsvpEntries = db.rsvpEntries;
+          this.render();
+          this.showToast(
+            `Đã làm mới danh sách (${this.rsvpEntries.length} phản hồi)`,
+          );
+        });
+
+      document
         .getElementById('btn-add-single-guest')
         ?.addEventListener('click', async () => {
           const raw = nameInput?.value.trim() || '';
@@ -1138,7 +1440,8 @@ export class InvitationWebOverlay {
           if (!this.invitedGuestList.includes(raw)) {
             this.invitedGuestList = [raw, ...this.invitedGuestList];
           }
-          await this.persistDatabase();
+          const saved = await saveAdminGuestList(this.invitedGuestList);
+          this.rsvpEntries = saved.rsvpEntries;
           await this.refreshPersonalizedPosterPreview();
           this.render();
           this.showToast(`Đã thêm ${raw}`);
@@ -1178,6 +1481,178 @@ export class InvitationWebOverlay {
         });
       });
 
+      const commitGuestRename = async (idx: number) => {
+        const inputEl = document.getElementById(
+          `input-edit-guest-${idx}`,
+        ) as HTMLInputElement | null;
+        const newName = inputEl?.value.trim() || '';
+        const oldName = this.invitedGuestList[idx];
+        this.editingGuestIndex = null;
+
+        if (!newName || !oldName || newName === oldName) {
+          this.render();
+          return;
+        }
+
+        soundEngine.playSoftClick();
+        this.invitedGuestList[idx] = newName;
+        if (this.guestName === oldName) {
+          this.guestName = newName;
+          void this.refreshPersonalizedPosterPreview();
+        }
+
+        // Also update any RSVP entry tied to the old guest card name
+        let rsvpUpdated = false;
+        this.rsvpEntries = this.rsvpEntries.map((entry) => {
+          if (entry.invitedCardName === oldName || entry.guestName === oldName) {
+            rsvpUpdated = true;
+            return {
+              ...entry,
+              invitedCardName:
+                entry.invitedCardName === oldName
+                  ? newName
+                  : entry.invitedCardName,
+              guestName:
+                entry.guestName === oldName ? newName : entry.guestName,
+            };
+          }
+          return entry;
+        });
+
+        if (rsvpUpdated) {
+          const saved = await saveGraduationDatabase(
+            {
+              guestList: this.invitedGuestList,
+              rsvpEntries: this.rsvpEntries,
+              updatedAt: new Date().toISOString(),
+            },
+            true,
+          );
+          this.invitedGuestList = saved.guestList;
+          this.rsvpEntries = saved.rsvpEntries;
+        } else {
+          const saved = await saveAdminGuestList(this.invitedGuestList);
+          this.rsvpEntries = saved.rsvpEntries;
+        }
+
+        this.render();
+        this.showToast(`Đã đổi tên thành "${newName}"`);
+      };
+
+      document.querySelectorAll('.quick-guest-edit').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = Number(
+            (btn as HTMLElement).getAttribute('data-edit-guest-index') || '0',
+          );
+          soundEngine.playSoftClick();
+          this.editingGuestIndex = idx;
+          this.render();
+          const editInput = document.getElementById(
+            `input-edit-guest-${idx}`,
+          ) as HTMLInputElement | null;
+          if (editInput) {
+            editInput.focus();
+            editInput.select();
+          }
+        });
+      });
+
+      document.querySelectorAll('.quick-guest-save-edit').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const idx = Number(
+            (btn as HTMLElement).getAttribute('data-save-guest-index') || '0',
+          );
+          await commitGuestRename(idx);
+        });
+      });
+
+      document.querySelectorAll('.quick-guest-cancel-edit').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.editingGuestIndex = null;
+          this.render();
+        });
+      });
+
+      if (this.editingGuestIndex !== null) {
+        const activeIdx = this.editingGuestIndex;
+        const editInput = document.getElementById(
+          `input-edit-guest-${activeIdx}`,
+        ) as HTMLInputElement | null;
+        editInput?.addEventListener('keydown', async (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            await commitGuestRename(activeIdx);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            this.editingGuestIndex = null;
+            this.render();
+          }
+        });
+      }
+
+      document.querySelectorAll('.admin-edit-rsvp').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const id = (btn as HTMLElement).getAttribute('data-edit-rsvp-id');
+          if (!id) return;
+          soundEngine.playSoftClick();
+          this.editingRsvpId = id;
+          this.render();
+        });
+      });
+
+      document.querySelectorAll('.admin-cancel-rsvp').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this.editingRsvpId = null;
+          this.render();
+        });
+      });
+
+      document.querySelectorAll('.admin-save-rsvp').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = (btn as HTMLElement).getAttribute('data-save-rsvp-id');
+          if (!id) return;
+          const nameInputEl = document.getElementById(
+            `edit-rsvp-name-${id}`,
+          ) as HTMLInputElement | null;
+          const attSelectEl = document.getElementById(
+            `edit-rsvp-att-${id}`,
+          ) as HTMLSelectElement | null;
+          const msgInputEl = document.getElementById(
+            `edit-rsvp-msg-${id}`,
+          ) as HTMLTextAreaElement | null;
+
+          const updatedName = nameInputEl?.value.trim();
+          const updatedAtt = attSelectEl?.value as AttendanceStatus | undefined;
+          const updatedMsg = msgInputEl?.value.trim();
+
+          this.editingRsvpId = null;
+          this.rsvpEntries = this.rsvpEntries.map((item) => {
+            if (item.id !== id) return item;
+            return {
+              ...item,
+              guestName: updatedName || item.guestName,
+              attendance: updatedAtt || item.attendance,
+              message: updatedMsg || item.message,
+            };
+          });
+
+          const saved = await saveGraduationDatabase(
+            {
+              guestList: this.invitedGuestList,
+              rsvpEntries: this.rsvpEntries,
+              updatedAt: new Date().toISOString(),
+            },
+            true,
+          );
+          this.rsvpEntries = saved.rsvpEntries;
+          this.render();
+          this.showToast('Đã cập nhật phản hồi');
+        });
+      });
+
       document.querySelectorAll('.quick-guest-delete').forEach((btn) => {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -1185,7 +1660,8 @@ export class InvitationWebOverlay {
             (btn as HTMLElement).getAttribute('data-delete-guest-index') || '0',
           );
           this.invitedGuestList.splice(idx, 1);
-          await this.persistDatabase();
+          const saved = await saveAdminGuestList(this.invitedGuestList);
+          this.rsvpEntries = saved.rsvpEntries;
           this.render();
         });
       });
@@ -1194,7 +1670,8 @@ export class InvitationWebOverlay {
         .getElementById('btn-clear-guest-list')
         ?.addEventListener('click', async () => {
           this.invitedGuestList = [];
-          await this.persistDatabase();
+          const saved = await saveAdminGuestList(this.invitedGuestList);
+          this.rsvpEntries = saved.rsvpEntries;
           this.render();
         });
 
@@ -1211,7 +1688,8 @@ export class InvitationWebOverlay {
               new Set([...this.invitedGuestList, ...names]),
             );
             this.guestName = names[0];
-            await this.persistDatabase();
+            const saved = await saveAdminGuestList(this.invitedGuestList);
+            this.rsvpEntries = saved.rsvpEntries;
             void this.refreshPersonalizedPosterPreview();
             this.render();
             this.showToast(`Đã thêm ${names.length} khách mời`);
@@ -1235,12 +1713,18 @@ export class InvitationWebOverlay {
         .getElementById('btn-preview-as-guest')
         ?.addEventListener('click', () => {
           soundEngine.playSoftClick();
+          try {
+            window.sessionStorage.setItem(HOST_PREVIEW_SESSION_KEY, '1');
+          } catch {
+            // Ignore
+          }
           const guestUrl = new URL(this.getShareableLink());
           guestUrl.searchParams.set('autostart', '1');
           window.history.pushState({}, '', guestUrl.toString());
           this.isAdminMode = canAccessHostLinkGenerator(
             window.location.search,
           );
+          this.isHostPreviewingGuest = !this.isAdminMode;
           this.render();
         });
 
@@ -1275,11 +1759,20 @@ export class InvitationWebOverlay {
           if (Array.isArray(parsed.rsvpEntries)) {
             this.rsvpEntries = parsed.rsvpEntries;
           }
-          await this.persistDatabase();
+          const saved = await saveGraduationDatabase(
+            {
+              guestList: this.invitedGuestList,
+              rsvpEntries: this.rsvpEntries,
+              updatedAt: new Date().toISOString(),
+            },
+            true,
+          );
+          this.invitedGuestList = saved.guestList;
+          this.rsvpEntries = saved.rsvpEntries;
           this.render();
-          this.showToast('Đã nhập file JSON');
+          this.showToast('Đã nhập danh sách thành công');
         } catch {
-          this.showToast('File JSON không hợp lệ');
+          this.showToast('File không hợp lệ');
         }
       });
     }
@@ -1343,8 +1836,10 @@ export class InvitationWebOverlay {
       const message = msgEl?.value.trim() || 'Chúc mừng tốt nghiệp Ngọc Thoa!';
 
       const newEntry: RsvpEntry = {
-        id: `wish-${Date.now()}`,
+        id: `wish-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         guestName,
+        invitedCardName: this.guestName,
+        submittedByRole: this.isAdminMode ? 'admin' : 'guest',
         pronoun: '',
         relation,
         attendance,
@@ -1356,11 +1851,16 @@ export class InvitationWebOverlay {
         }),
       };
 
-      this.rsvpEntries = [newEntry, ...this.rsvpEntries];
-      await this.persistDatabase();
+      const savedDb = await submitGuestRsvpEntry(newEntry);
+      this.rsvpEntries = savedDb.rsvpEntries;
+      if (savedDb.guestList.length > 0) {
+        this.invitedGuestList = savedDb.guestList;
+      }
       soundEngine.playCelebrationFanfare();
       this.render();
-      this.showToast(`Cảm ơn ${guestName} đã gửi lời chúc!`);
+      this.showToast(
+        `Đã lưu lời chúc & xác nhận của ${guestName} vào hệ thống!`,
+      );
     });
   }
 

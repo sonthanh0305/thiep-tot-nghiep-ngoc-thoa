@@ -3,6 +3,8 @@ export type AttendanceStatus = 'attending' | 'after_ceremony' | 'remote_wish';
 export interface RsvpEntry {
   id: string;
   guestName: string;
+  invitedCardName?: string;
+  submittedByRole?: 'admin' | 'guest';
   pronoun: string;
   relation: string;
   attendance: AttendanceStatus;

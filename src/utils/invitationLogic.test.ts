@@ -8,6 +8,7 @@ import {
   calculateCountdown,
   canAccessHostLinkGenerator,
   computeRsvpStats,
+  findRsvpForInvitedGuest,
   generateIcsCalendarContent,
   parseGuestListText,
   validateRsvpInput,
@@ -151,4 +152,25 @@ test('parseGuestListText splits strictly by line and preserves commas and parent
     'Team Danh, Linh Linh, TC',
     'Hội bạn Hồng Ngọc, Bảo, Vũ',
   ]);
+});
+
+test('findRsvpForInvitedGuest binds guest RSVP entries to the invited guest list item', () => {
+  const entries = [
+    {
+      id: 'w-1',
+      guestName: 'Bi (Team tiếng Trung)',
+      invitedCardName: 'Team tiếng Trung (ĐA, Bi)',
+      submittedByRole: 'guest' as const,
+      pronoun: '',
+      relation: 'Đồng nghiệp',
+      attendance: 'attending' as const,
+      partySize: 2,
+      message: 'Tụi mình sẽ qua đúng 11h30 nhé!',
+      createdAt: '10:30',
+    },
+  ];
+  const matched = findRsvpForInvitedGuest('Team tiếng Trung (ĐA, Bi)', entries);
+  assert.ok(matched);
+  assert.equal(matched?.attendance, 'attending');
+  assert.equal(findRsvpForInvitedGuest('Bác Nhân', entries), undefined);
 });

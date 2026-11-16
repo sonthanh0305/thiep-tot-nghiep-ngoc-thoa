@@ -279,6 +279,25 @@ export function formatAttendanceLabel(status: AttendanceStatus): string {
   }
 }
 
+export function findRsvpForInvitedGuest(
+  invitedName: string,
+  entries: RsvpEntry[],
+): RsvpEntry | undefined {
+  const target = invitedName.trim().toLowerCase();
+  if (!target) return undefined;
+
+  return entries.find((entry) => {
+    const cardKey = (entry.invitedCardName ?? '').trim().toLowerCase();
+    const guestKey = (entry.guestName ?? '').trim().toLowerCase();
+    return (
+      cardKey === target ||
+      guestKey === target ||
+      guestKey.includes(target) ||
+      target.includes(guestKey)
+    );
+  });
+}
+
 export function buildPersonalizedShareUrl(
   baseUrl: string,
   guestName: string,
