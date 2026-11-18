@@ -1,5 +1,6 @@
 import type {
   AttendanceStatus,
+  CeremonyConfig,
   CountdownBreakdown,
   PhotoboothFrame,
   RsvpEntry,
@@ -30,6 +31,101 @@ export const GRADUATION_INFO = {
   campusMapAssetPath: '/assets/aistudio/image_5c284f8d.png',
   contactPhone: '0909 261 226',
 } as const;
+
+export const DEFAULT_CEREMONY_CONFIG: CeremonyConfig = {
+  dateDisplay: GRADUATION_INFO.dateDisplay,
+  timeDisplay: GRADUATION_INFO.timeDisplay,
+  photoTimeDisplay: '12h15',
+  hallName: GRADUATION_INFO.hallName,
+  hallDirectionNote: 'Khu HTA — Rẽ phải từ cổng chính',
+  addressLine: GRADUATION_INFO.addressLine,
+  universityName: GRADUATION_INFO.universityName,
+  googleMapsUrl: GRADUATION_INFO.googleMapsUrl,
+};
+
+export function normalizeCeremonyConfig(
+  raw?: Partial<CeremonyConfig> | null,
+): CeremonyConfig {
+  if (!raw || typeof raw !== 'object') {
+    return { ...DEFAULT_CEREMONY_CONFIG };
+  }
+  return {
+    dateDisplay:
+      typeof raw.dateDisplay === 'string' && raw.dateDisplay.trim()
+        ? raw.dateDisplay.trim()
+        : DEFAULT_CEREMONY_CONFIG.dateDisplay,
+    timeDisplay:
+      typeof raw.timeDisplay === 'string' && raw.timeDisplay.trim()
+        ? raw.timeDisplay.trim()
+        : DEFAULT_CEREMONY_CONFIG.timeDisplay,
+    photoTimeDisplay:
+      typeof raw.photoTimeDisplay === 'string' && raw.photoTimeDisplay.trim()
+        ? raw.photoTimeDisplay.trim()
+        : DEFAULT_CEREMONY_CONFIG.photoTimeDisplay,
+    hallName:
+      typeof raw.hallName === 'string' && raw.hallName.trim()
+        ? raw.hallName.trim()
+        : DEFAULT_CEREMONY_CONFIG.hallName,
+    hallDirectionNote:
+      typeof raw.hallDirectionNote === 'string' && raw.hallDirectionNote.trim()
+        ? raw.hallDirectionNote.trim()
+        : DEFAULT_CEREMONY_CONFIG.hallDirectionNote,
+    addressLine:
+      typeof raw.addressLine === 'string' && raw.addressLine.trim()
+        ? raw.addressLine.trim()
+        : DEFAULT_CEREMONY_CONFIG.addressLine,
+    universityName:
+      typeof raw.universityName === 'string' && raw.universityName.trim()
+        ? raw.universityName.trim()
+        : DEFAULT_CEREMONY_CONFIG.universityName,
+    googleMapsUrl:
+      typeof raw.googleMapsUrl === 'string' && raw.googleMapsUrl.trim()
+        ? raw.googleMapsUrl.trim()
+        : DEFAULT_CEREMONY_CONFIG.googleMapsUrl,
+  };
+}
+
+/**
+ * Parses a Vietnamese date string (e.g. "01.12.2026", "01/12/2026", "2026-12-01")
+ * and time string (e.g. "11h30", "11:30", "08h00") into a UTC+7 epoch timestamp (ms).
+ */
+export function parseCeremonyTargetTimestampMs(
+  config: CeremonyConfig = DEFAULT_CEREMONY_CONFIG,
+): number {
+  const dateRaw = (config.dateDisplay || '').trim();
+  const timeRaw = (config.timeDisplay || '').trim();
+
+  let year = 2026;
+  let month = 12;
+  let day = 1;
+
+  const dmyMatch = dateRaw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  const ymdMatch = dateRaw.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+
+  if (dmyMatch) {
+    day = Number(dmyMatch[1]);
+    month = Number(dmyMatch[2]);
+    year = Number(dmyMatch[3]);
+  } else if (ymdMatch) {
+    year = Number(ymdMatch[1]);
+    month = Number(ymdMatch[2]);
+    day = Number(ymdMatch[3]);
+  }
+
+  let hour = 11;
+  let minute = 30;
+  const timeMatch = timeRaw.match(/(\d{1,2})\s*[hH:]\s*(\d{1,2})?/);
+  if (timeMatch) {
+    hour = Math.min(23, Math.max(0, Number(timeMatch[1])));
+    minute = timeMatch[2]
+      ? Math.min(59, Math.max(0, Number(timeMatch[2])))
+      : 0;
+  }
+
+  const isoStr = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+07:00`;
+  const parsedMs = Date.parse(isoStr);
+  return Number.isFinite(parsedMs) ? parsedMs : GRADUATION_INFO.targetTimestampMs;
+}
 
 export const DEFAULT_INVITED_GUEST_LIST: string[] = [
   'Bố mẹ iu',
@@ -268,12 +364,15 @@ export function computeRsvpStats(entries: RsvpEntry[]): {
   };
 }
 
-export function formatAttendanceLabel(status: AttendanceStatus): string {
+export function formatAttendanceLabel(
+  status: AttendanceStatus,
+  config: CeremonyConfig = DEFAULT_CEREMONY_CONFIG,
+): string {
   switch (status) {
     case 'attending':
-      return 'Tham dự lúc 11h30 tại Hội trường A';
+      return `Tham dự lúc ${config.timeDisplay} tại ${config.hallName}`;
     case 'after_ceremony':
-      return 'Ghé chụp hình lúc 12h15';
+      return `Ghé chụp hình lúc ${config.photoTimeDisplay}`;
     case 'remote_wish':
       return 'Gửi lời chúc từ xa';
   }
@@ -316,8 +415,33 @@ export function buildPersonalizedShareUrl(
   }
 }
 
-export function generateIcsCalendarContent(guestName: string = 'Bạn'): string {
+export function generateIcsCalendarContent(
+  guestName: string = 'Bạn',
+  config: CeremonyConfig = DEFAULT_CEREMONY_CONFIG,
+): string {
   const cleanGuest = guestName.trim() || 'Bạn';
+  const startMs = parseCeremonyTargetTimestampMs(config);
+  const endMs = startMs + 2 * 3600 * 1000;
+
+  const toIcsUtc = (ms: number): string => {
+    const d = new Date(ms);
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const min = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${yyyy}${mm}${dd}T${hh}${min}00Z`;
+  };
+
+  const escapedLocation = `${config.hallName} - ${config.universityName}, ${config.addressLine}`.replace(
+    /,/g,
+    '\\,',
+  );
+  const escapedDesc = `Trân trọng kính mời ${cleanGuest} tới dự Lễ Tốt Nghiệp của Trần Thị Ngọc Thoa lúc ${config.timeDisplay} ngày ${config.dateDisplay} tại ${config.hallName}, ${config.addressLine}.`.replace(
+    /,/g,
+    '\\,',
+  );
+
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -327,11 +451,11 @@ export function generateIcsCalendarContent(guestName: string = 'Bạn'): string 
     'BEGIN:VEVENT',
     'UID:graduation-tran-thi-ngoc-thoa-20261201@ptit.edu.vn',
     'DTSTAMP:20261115T120000Z',
-    'DTSTART:20261201T043000Z',
-    'DTEND:20261201T063000Z',
+    `DTSTART:${toIcsUtc(startMs)}`,
+    `DTEND:${toIcsUtc(endMs)}`,
     `SUMMARY:Lễ Tốt Nghiệp Trần Thị Ngọc Thoa (${cleanGuest})`,
-    'LOCATION:Hội trường A - Học viện Công nghệ Bưu chính Viễn thông\\, 97 Man Thiện\\, Tăng Nhơn Phú\\, TPHCM',
-    `DESCRIPTION:Trân trọng kính mời ${cleanGuest} tới dự Lễ Tốt Nghiệp của Trần Thị Ngọc Thoa lúc 11h30 ngày 01.12.2026 tại Hội trường A\\, 97 Man Thiện\\, Tăng Nhơn Phú\\, TPHCM.`,
+    `LOCATION:${escapedLocation}`,
+    `DESCRIPTION:${escapedDesc}`,
     'STATUS:CONFIRMED',
     'END:VEVENT',
     'END:VCALENDAR',

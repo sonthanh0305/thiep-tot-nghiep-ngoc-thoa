@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_CEREMONY_CONFIG,
   DEFAULT_INVITED_GUEST_LIST,
   GRADUATION_INFO,
   INITIAL_RSVP_ENTRIES,
@@ -9,7 +10,10 @@ import {
   canAccessHostLinkGenerator,
   computeRsvpStats,
   findRsvpForInvitedGuest,
+  formatAttendanceLabel,
   generateIcsCalendarContent,
+  normalizeCeremonyConfig,
+  parseCeremonyTargetTimestampMs,
   parseGuestListText,
   validateRsvpInput,
 } from './invitationLogic';
@@ -182,3 +186,34 @@ test('findRsvpForInvitedGuest binds guest RSVP entries to the invited guest list
   assert.equal(matched?.attendance, 'attending');
   assert.equal(findRsvpForInvitedGuest('Bác Nhân', entries), undefined);
 });
+
+test('normalizeCeremonyConfig and parseCeremonyTargetTimestampMs support custom time and location', () => {
+  const customCfg = normalizeCeremonyConfig({
+    dateDisplay: '15.12.2026',
+    timeDisplay: '08h30',
+    photoTimeDisplay: '09h30 - 11h00',
+    hallName: 'Hội trường D (HTD)',
+    addressLine: '11 Nguyễn Đình Chiểu, Quận 1, TP.HCM',
+  });
+  assert.equal(customCfg.dateDisplay, '15.12.2026');
+  assert.equal(customCfg.timeDisplay, '08h30');
+  assert.equal(customCfg.hallName, 'Hội trường D (HTD)');
+  assert.equal(customCfg.universityName, DEFAULT_CEREMONY_CONFIG.universityName);
+
+  const parsedMs = parseCeremonyTargetTimestampMs(customCfg);
+  assert.equal(parsedMs, Date.parse('2026-12-15T08:30:00+07:00'));
+
+  assert.equal(
+    formatAttendanceLabel('attending', customCfg),
+    'Tham dự lúc 08h30 tại Hội trường D (HTD)',
+  );
+  assert.equal(
+    formatAttendanceLabel('after_ceremony', customCfg),
+    'Ghé chụp hình lúc 09h30 - 11h00',
+  );
+
+  const ics = generateIcsCalendarContent('Bố mẹ iu', customCfg);
+  assert.ok(ics.includes('Hội trường D (HTD)'));
+  assert.ok(ics.includes('11 Nguyễn Đình Chiểu'));
+});
+

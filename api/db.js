@@ -85,6 +85,8 @@ async function readCombinedDb() {
     return {
       guestList: Array.isArray(localDb.guestList) ? localDb.guestList : [],
       guestListUpdatedAt: Number(localDb.guestListUpdatedAt || 0),
+      ceremonyConfig: localDb.ceremonyConfig || null,
+      ceremonyConfigUpdatedAt: Number(localDb.ceremonyConfigUpdatedAt || 0),
       rsvpEntries: Array.isArray(localDb.rsvpEntries) ? localDb.rsvpEntries : [],
       deletedRsvpIds: Array.isArray(localDb.deletedRsvpIds)
         ? localDb.deletedRsvpIds
@@ -113,6 +115,13 @@ async function readCombinedDb() {
         ? localGuests
         : cloudGuests;
 
+  const cloudCfgTs = Number(cloudDb.ceremonyConfigUpdatedAt || 0);
+  const localCfgTs = Number(localDb.ceremonyConfigUpdatedAt || 0);
+  const chosenCeremonyConfig =
+    cloudCfgTs >= localCfgTs && cloudDb.ceremonyConfig
+      ? cloudDb.ceremonyConfig
+      : localDb.ceremonyConfig || cloudDb.ceremonyConfig || null;
+
   const mergedRsvps = mergeRsvpLists(
     Array.isArray(cloudDb.rsvpEntries) ? cloudDb.rsvpEntries : [],
     Array.isArray(localDb.rsvpEntries) ? localDb.rsvpEntries : [],
@@ -122,6 +131,8 @@ async function readCombinedDb() {
   const combined = {
     guestList: chosenGuests,
     guestListUpdatedAt: Math.max(cloudGuestTs, localGuestTs),
+    ceremonyConfig: chosenCeremonyConfig,
+    ceremonyConfigUpdatedAt: Math.max(cloudCfgTs, localCfgTs),
     rsvpEntries: mergedRsvps,
     deletedRsvpIds: deletedIds,
     updatedAt: cloudDb.updatedAt || localDb.updatedAt || new Date().toISOString(),
@@ -135,6 +146,8 @@ async function writeCombinedDb(nextDb) {
   const payload = {
     guestList: Array.isArray(nextDb.guestList) ? nextDb.guestList : [],
     guestListUpdatedAt: Number(nextDb.guestListUpdatedAt || Date.now()),
+    ceremonyConfig: nextDb.ceremonyConfig || null,
+    ceremonyConfigUpdatedAt: Number(nextDb.ceremonyConfigUpdatedAt || 0),
     rsvpEntries: Array.isArray(nextDb.rsvpEntries) ? nextDb.rsvpEntries : [],
     deletedRsvpIds: Array.isArray(nextDb.deletedRsvpIds)
       ? nextDb.deletedRsvpIds
@@ -194,6 +207,8 @@ export default async function handler(req, res) {
         const saved = await writeCombinedDb({
           guestList: current.guestList,
           guestListUpdatedAt: current.guestListUpdatedAt,
+          ceremonyConfig: current.ceremonyConfig,
+          ceremonyConfigUpdatedAt: current.ceremonyConfigUpdatedAt,
           rsvpEntries: [parsed.entry, ...filtered],
           deletedRsvpIds: Array.from(deletedSet),
         });
@@ -209,6 +224,8 @@ export default async function handler(req, res) {
         const saved = await writeCombinedDb({
           guestList: current.guestList,
           guestListUpdatedAt: current.guestListUpdatedAt,
+          ceremonyConfig: current.ceremonyConfig,
+          ceremonyConfigUpdatedAt: current.ceremonyConfigUpdatedAt,
           rsvpEntries: nextEntries,
           deletedRsvpIds: Array.from(deletedSet),
         });
@@ -223,6 +240,21 @@ export default async function handler(req, res) {
         const saved = await writeCombinedDb({
           guestList: nextGuests,
           guestListUpdatedAt: Date.now(),
+          ceremonyConfig: current.ceremonyConfig,
+          ceremonyConfigUpdatedAt: current.ceremonyConfigUpdatedAt,
+          rsvpEntries: current.rsvpEntries,
+          deletedRsvpIds: Array.from(deletedSet),
+        });
+        res.status(200).send(JSON.stringify(saved));
+        return;
+      }
+
+      if (parsed.action === 'update_ceremony_config' && parsed.ceremonyConfig) {
+        const saved = await writeCombinedDb({
+          guestList: current.guestList,
+          guestListUpdatedAt: current.guestListUpdatedAt,
+          ceremonyConfig: parsed.ceremonyConfig,
+          ceremonyConfigUpdatedAt: Date.now(),
           rsvpEntries: current.rsvpEntries,
           deletedRsvpIds: Array.from(deletedSet),
         });
@@ -250,6 +282,10 @@ export default async function handler(req, res) {
       const saved = await writeCombinedDb({
         guestList: nextGuests,
         guestListUpdatedAt: Date.now(),
+        ceremonyConfig: parsed.ceremonyConfig || current.ceremonyConfig,
+        ceremonyConfigUpdatedAt: parsed.ceremonyConfig
+          ? Date.now()
+          : current.ceremonyConfigUpdatedAt,
         rsvpEntries: nextRsvps,
         deletedRsvpIds: Array.from(deletedSet),
       });

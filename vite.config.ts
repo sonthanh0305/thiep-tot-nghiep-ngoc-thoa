@@ -25,6 +25,8 @@ interface StoredRsvpEntry {
 interface StoredDatabase {
   guestList: string[];
   guestListUpdatedAt?: number;
+  ceremonyConfig?: Record<string, unknown> | null;
+  ceremonyConfigUpdatedAt?: number;
   rsvpEntries: StoredRsvpEntry[];
   deletedRsvpIds?: string[];
   updatedAt: string;
@@ -61,6 +63,8 @@ async function readLocalFileDb(): Promise<StoredDatabase> {
     return {
       guestList: Array.isArray(parsed.guestList) ? parsed.guestList : [],
       guestListUpdatedAt: Number(parsed.guestListUpdatedAt || 0),
+      ceremonyConfig: parsed.ceremonyConfig || null,
+      ceremonyConfigUpdatedAt: Number(parsed.ceremonyConfigUpdatedAt || 0),
       rsvpEntries: Array.isArray(parsed.rsvpEntries) ? parsed.rsvpEntries : [],
       deletedRsvpIds: Array.isArray(parsed.deletedRsvpIds)
         ? parsed.deletedRsvpIds
@@ -71,6 +75,8 @@ async function readLocalFileDb(): Promise<StoredDatabase> {
     return {
       guestList: [],
       guestListUpdatedAt: 0,
+      ceremonyConfig: null,
+      ceremonyConfigUpdatedAt: 0,
       rsvpEntries: [],
       deletedRsvpIds: [],
       updatedAt: new Date().toISOString(),
@@ -126,6 +132,13 @@ async function readDbFromFile(): Promise<StoredDatabase> {
         ? localGuests
         : cloudGuests;
 
+  const cloudCfgTs = Number(cloudDb.ceremonyConfigUpdatedAt || 0);
+  const localCfgTs = Number(localDb.ceremonyConfigUpdatedAt || 0);
+  const chosenCeremonyConfig =
+    cloudCfgTs >= localCfgTs && cloudDb.ceremonyConfig
+      ? cloudDb.ceremonyConfig
+      : localDb.ceremonyConfig || cloudDb.ceremonyConfig || null;
+
   const mergedRsvps = mergeRsvpLists(
     Array.isArray(cloudDb.rsvpEntries) ? cloudDb.rsvpEntries : [],
     localDb.rsvpEntries,
@@ -135,6 +148,8 @@ async function readDbFromFile(): Promise<StoredDatabase> {
   return {
     guestList: chosenGuests,
     guestListUpdatedAt: Math.max(cloudGuestTs, localGuestTs),
+    ceremonyConfig: chosenCeremonyConfig,
+    ceremonyConfigUpdatedAt: Math.max(cloudCfgTs, localCfgTs),
     rsvpEntries: mergedRsvps,
     deletedRsvpIds: deletedIds,
     updatedAt: cloudDb.updatedAt || localDb.updatedAt || new Date().toISOString(),
@@ -145,6 +160,8 @@ async function writeDbToFile(db: StoredDatabase): Promise<StoredDatabase> {
   const payload: StoredDatabase = {
     guestList: db.guestList,
     guestListUpdatedAt: db.guestListUpdatedAt ?? Date.now(),
+    ceremonyConfig: db.ceremonyConfig ?? null,
+    ceremonyConfigUpdatedAt: db.ceremonyConfigUpdatedAt ?? 0,
     rsvpEntries: db.rsvpEntries,
     deletedRsvpIds: db.deletedRsvpIds ?? [],
     updatedAt: new Date().toISOString(),
@@ -191,10 +208,12 @@ function jsonDatabasePlugin(): Plugin {
                 | 'submit_rsvp'
                 | 'delete_rsvp'
                 | 'update_guest_list'
+                | 'update_ceremony_config'
                 | 'import_json';
               entry?: StoredRsvpEntry;
               entryId?: string;
               guestList?: unknown;
+              ceremonyConfig?: Record<string, unknown> | null;
               rsvpEntries?: unknown;
               deletedRsvpIds?: unknown;
               overwriteRsvp?: boolean;
@@ -212,6 +231,8 @@ function jsonDatabasePlugin(): Plugin {
               const saved = await writeDbToFile({
                 guestList: current.guestList,
                 guestListUpdatedAt: current.guestListUpdatedAt,
+                ceremonyConfig: current.ceremonyConfig,
+                ceremonyConfigUpdatedAt: current.ceremonyConfigUpdatedAt,
                 rsvpEntries: nextEntries,
                 deletedRsvpIds: Array.from(deletedSet),
                 updatedAt: new Date().toISOString(),
@@ -229,6 +250,8 @@ function jsonDatabasePlugin(): Plugin {
               const saved = await writeDbToFile({
                 guestList: current.guestList,
                 guestListUpdatedAt: current.guestListUpdatedAt,
+                ceremonyConfig: current.ceremonyConfig,
+                ceremonyConfigUpdatedAt: current.ceremonyConfigUpdatedAt,
                 rsvpEntries: nextEntries,
                 deletedRsvpIds: Array.from(deletedSet),
                 updatedAt: new Date().toISOString(),
@@ -247,6 +270,26 @@ function jsonDatabasePlugin(): Plugin {
               const saved = await writeDbToFile({
                 guestList: nextGuests,
                 guestListUpdatedAt: Date.now(),
+                ceremonyConfig: current.ceremonyConfig,
+                ceremonyConfigUpdatedAt: current.ceremonyConfigUpdatedAt,
+                rsvpEntries: current.rsvpEntries,
+                deletedRsvpIds: Array.from(deletedSet),
+                updatedAt: new Date().toISOString(),
+              });
+              res.statusCode = 200;
+              res.end(JSON.stringify(saved));
+              return;
+            }
+
+            if (
+              parsed.action === 'update_ceremony_config' &&
+              parsed.ceremonyConfig
+            ) {
+              const saved = await writeDbToFile({
+                guestList: current.guestList,
+                guestListUpdatedAt: current.guestListUpdatedAt,
+                ceremonyConfig: parsed.ceremonyConfig,
+                ceremonyConfigUpdatedAt: Date.now(),
                 rsvpEntries: current.rsvpEntries,
                 deletedRsvpIds: Array.from(deletedSet),
                 updatedAt: new Date().toISOString(),
@@ -279,6 +322,10 @@ function jsonDatabasePlugin(): Plugin {
             const saved = await writeDbToFile({
               guestList: nextGuests,
               guestListUpdatedAt: Date.now(),
+              ceremonyConfig: parsed.ceremonyConfig || current.ceremonyConfig,
+              ceremonyConfigUpdatedAt: parsed.ceremonyConfig
+                ? Date.now()
+                : current.ceremonyConfigUpdatedAt,
               rsvpEntries: nextRsvps,
               deletedRsvpIds: Array.from(deletedSet),
               updatedAt: new Date().toISOString(),

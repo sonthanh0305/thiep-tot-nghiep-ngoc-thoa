@@ -1,4 +1,10 @@
-import { GRADUATION_INFO, PHOTOBOOTH_FRAMES } from './invitationLogic';
+import type { CeremonyConfig } from '../types';
+import {
+  DEFAULT_CEREMONY_CONFIG,
+  GRADUATION_INFO,
+  PHOTOBOOTH_FRAMES,
+  normalizeCeremonyConfig,
+} from './invitationLogic';
 
 let cachedSourceImage: HTMLImageElement | null = null;
 let imageLoadPromise: Promise<HTMLImageElement> | null = null;
@@ -57,15 +63,19 @@ export function loadPhotoboothStripImage(): Promise<HTMLImageElement> {
 }
 
 /**
- * Renders the original graduation poster onto the target canvas and inscribes
- * ONLY the guest's name cleanly centered inside the bottom-right "Trân trọng kính mời:" box.
+ * Renders the graduation poster onto the target canvas, inscribing the guest's name
+ * in the bottom-right box, and dynamically updating the bottom-left ceremony time & location
+ * whenever customized by the Admin.
  */
 export async function renderPersonalizedPosterToCanvas(
   canvas: HTMLCanvasElement,
   guestName: string,
+  ceremonyConfig?: Partial<CeremonyConfig> | null,
 ): Promise<string> {
   const ctx = canvas.getContext('2d');
   if (!ctx) return '';
+
+  const cfg = normalizeCeremonyConfig(ceremonyConfig);
 
   try {
     const img = await loadPosterImage();
@@ -76,6 +86,73 @@ export async function renderPersonalizedPosterToCanvas(
 
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
+
+    const hasCustomCeremonyInfo =
+      cfg.dateDisplay !== DEFAULT_CEREMONY_CONFIG.dateDisplay ||
+      cfg.timeDisplay !== DEFAULT_CEREMONY_CONFIG.timeDisplay ||
+      cfg.hallName !== DEFAULT_CEREMONY_CONFIG.hallName ||
+      cfg.addressLine !== DEFAULT_CEREMONY_CONFIG.addressLine ||
+      cfg.universityName !== DEFAULT_CEREMONY_CONFIG.universityName;
+
+    if (hasCustomCeremonyInfo) {
+      ctx.save();
+      const patchX = width * 0.032;
+      const patchY = height * 0.878;
+      const patchW = width * 0.548;
+      const patchH = height * 0.114;
+
+      const bgGrad = ctx.createLinearGradient(
+        patchX,
+        patchY,
+        patchX,
+        patchY + patchH,
+      );
+      bgGrad.addColorStop(0, 'rgba(42, 43, 45, 0.95)');
+      bgGrad.addColorStop(0.35, 'rgba(35, 36, 38, 0.98)');
+      bgGrad.addColorStop(1, 'rgba(28, 29, 31, 0.99)');
+
+      ctx.fillStyle = bgGrad;
+      ctx.beginPath();
+      ctx.roundRect(patchX, patchY, patchW, patchH, Math.round(width * 0.016));
+      ctx.fill();
+
+      const textX = width * 0.052;
+      const maxTextW = width * 0.515;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      // 1. University Name
+      ctx.font = `700 ${Math.round(width * 0.0235)}px "Plus Jakarta Sans", Arial, sans-serif`;
+      ctx.fillStyle = '#f2d5b8';
+      ctx.fillText(
+        cfg.universityName.toUpperCase(),
+        textX,
+        height * 0.895,
+        maxTextW,
+      );
+
+      // 2. Date | Time
+      ctx.font = `600 ${Math.round(width * 0.045)}px "Plus Jakarta Sans", Arial, sans-serif`;
+      ctx.fillStyle = '#f5dec3';
+      ctx.fillText(
+        `${cfg.dateDisplay} | ${cfg.timeDisplay}`,
+        textX,
+        height * 0.925,
+        maxTextW,
+      );
+
+      // 3. Hall Name
+      ctx.font = `500 ${Math.round(width * 0.028)}px "Plus Jakarta Sans", Arial, sans-serif`;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(cfg.hallName, textX, height * 0.955, maxTextW);
+
+      // 4. Address Line
+      ctx.font = `400 ${Math.round(width * 0.025)}px "Plus Jakarta Sans", Arial, sans-serif`;
+      ctx.fillStyle = '#f3f4f6';
+      ctx.fillText(cfg.addressLine, textX, height * 0.978, maxTextW);
+
+      ctx.restore();
+    }
 
     const displayGuest = guestName.trim() || 'Quý khách';
 

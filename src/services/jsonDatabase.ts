@@ -1,8 +1,14 @@
-import type { RsvpEntry } from '../types';
+import type { CeremonyConfig, RsvpEntry } from '../types';
+import {
+  DEFAULT_CEREMONY_CONFIG,
+  normalizeCeremonyConfig,
+} from '../utils/invitationLogic';
 
 export interface GraduationJsonDatabase {
   guestList: string[];
   guestListUpdatedAt?: number;
+  ceremonyConfig?: CeremonyConfig;
+  ceremonyConfigUpdatedAt?: number;
   rsvpEntries: RsvpEntry[];
   deletedRsvpIds?: string[];
   updatedAt: string;
@@ -201,9 +207,29 @@ export async function loadGraduationDatabase(): Promise<GraduationJsonDatabase> 
       chosenGuests = apiGuests;
     }
 
+    const cloudCfgTs = Number(cloudData?.ceremonyConfigUpdatedAt || 0);
+    const apiCfgTs = Number(apiData?.ceremonyConfigUpdatedAt || 0);
+    const localCfgTs = Number(localCache.ceremonyConfigUpdatedAt || 0);
+    const maxCfgTs = Math.max(cloudCfgTs, apiCfgTs, localCfgTs);
+
+    let chosenCeremonyConfig = normalizeCeremonyConfig(localCache.ceremonyConfig);
+    if (maxCfgTs === cloudCfgTs && cloudData?.ceremonyConfig) {
+      chosenCeremonyConfig = normalizeCeremonyConfig(cloudData.ceremonyConfig);
+    } else if (maxCfgTs === apiCfgTs && apiData?.ceremonyConfig) {
+      chosenCeremonyConfig = normalizeCeremonyConfig(apiData.ceremonyConfig);
+    } else if (localCache.ceremonyConfig && localCfgTs > 0) {
+      chosenCeremonyConfig = normalizeCeremonyConfig(localCache.ceremonyConfig);
+    } else if (cloudData?.ceremonyConfig) {
+      chosenCeremonyConfig = normalizeCeremonyConfig(cloudData.ceremonyConfig);
+    } else if (apiData?.ceremonyConfig) {
+      chosenCeremonyConfig = normalizeCeremonyConfig(apiData.ceremonyConfig);
+    }
+
     const normalized: GraduationJsonDatabase = {
       guestList: chosenGuests,
       guestListUpdatedAt: maxTs,
+      ceremonyConfig: chosenCeremonyConfig,
+      ceremonyConfigUpdatedAt: maxCfgTs,
       rsvpEntries: mergedAllRsvps,
       deletedRsvpIds: Array.from(deletedSet),
       updatedAt:
@@ -239,6 +265,12 @@ export async function loadGraduationDatabase(): Promise<GraduationJsonDatabase> 
         guestList:
           localCache.guestList.length > 0 ? localCache.guestList : staticGuests,
         guestListUpdatedAt: localCache.guestListUpdatedAt || 0,
+        ceremonyConfig: normalizeCeremonyConfig(
+          localCache.ceremonyConfig || data.ceremonyConfig,
+        ),
+        ceremonyConfigUpdatedAt:
+          localCache.ceremonyConfigUpdatedAt ||
+          Number(data.ceremonyConfigUpdatedAt || 0),
         rsvpEntries: mergeUniqueRsvpEntries(
           localCache.rsvpEntries,
           staticRsvps,
@@ -275,6 +307,8 @@ export async function submitGuestRsvpEntry(
   const nextDb: GraduationJsonDatabase = {
     guestList: current.guestList,
     guestListUpdatedAt: current.guestListUpdatedAt || 0,
+    ceremonyConfig: normalizeCeremonyConfig(current.ceremonyConfig),
+    ceremonyConfigUpdatedAt: current.ceremonyConfigUpdatedAt || 0,
     rsvpEntries: [entry, ...filtered],
     deletedRsvpIds: Array.from(deletedSet),
     updatedAt: new Date().toISOString(),
@@ -312,6 +346,8 @@ export async function deleteRsvpEntryFromDatabase(
   const nextDb: GraduationJsonDatabase = {
     guestList: current.guestList,
     guestListUpdatedAt: current.guestListUpdatedAt || 0,
+    ceremonyConfig: normalizeCeremonyConfig(current.ceremonyConfig),
+    ceremonyConfigUpdatedAt: current.ceremonyConfigUpdatedAt || 0,
     rsvpEntries: current.rsvpEntries.filter(
       (e) => e.id !== entryId && !deletedSet.has(e.id),
     ),
@@ -347,6 +383,8 @@ export async function saveAdminGuestList(
   const nextDb: GraduationJsonDatabase = {
     guestList,
     guestListUpdatedAt: Date.now(),
+    ceremonyConfig: normalizeCeremonyConfig(current.ceremonyConfig),
+    ceremonyConfigUpdatedAt: current.ceremonyConfigUpdatedAt || 0,
     rsvpEntries: current.rsvpEntries,
     deletedRsvpIds: current.deletedRsvpIds || Array.from(getLocalDeletedRsvpIds()),
     updatedAt: new Date().toISOString(),
@@ -371,6 +409,42 @@ export async function saveAdminGuestList(
 }
 
 /**
+ * Dedicated Admin function to update Ceremony Time & Venue Configuration.
+ */
+export async function saveAdminCeremonyConfig(
+  config: CeremonyConfig,
+): Promise<GraduationJsonDatabase> {
+  const current = await loadGraduationDatabase();
+  const normalizedCfg = normalizeCeremonyConfig(config);
+  const nextDb: GraduationJsonDatabase = {
+    guestList: current.guestList,
+    guestListUpdatedAt: current.guestListUpdatedAt || 0,
+    ceremonyConfig: normalizedCfg,
+    ceremonyConfigUpdatedAt: Date.now(),
+    rsvpEntries: current.rsvpEntries,
+    deletedRsvpIds: current.deletedRsvpIds || Array.from(getLocalDeletedRsvpIds()),
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveLocalCache(nextDb);
+  notifyAllTabs(nextDb);
+
+  await Promise.allSettled([
+    pushToCloudKv(nextDb),
+    fetch('/api/db', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'update_ceremony_config',
+        ceremonyConfig: normalizedCfg,
+      }),
+    }),
+  ]);
+
+  return nextDb;
+}
+
+/**
  * Full database save (used when editing an RSVP entry, renaming a guest with RSVP, or importing JSON).
  */
 export async function saveGraduationDatabase(
@@ -383,6 +457,12 @@ export async function saveGraduationDatabase(
   const payload: GraduationJsonDatabase = {
     guestList: db.guestList,
     guestListUpdatedAt: Date.now(),
+    ceremonyConfig: normalizeCeremonyConfig(
+      db.ceremonyConfig || current.ceremonyConfig,
+    ),
+    ceremonyConfigUpdatedAt: db.ceremonyConfig
+      ? Date.now()
+      : current.ceremonyConfigUpdatedAt || 0,
     rsvpEntries: overwriteRsvp
       ? db.rsvpEntries.filter((e) => e && !deletedSet.has(e.id))
       : mergeUniqueRsvpEntries(db.rsvpEntries, current.rsvpEntries, deletedSet),
@@ -469,6 +549,8 @@ function loadLocalCache(): GraduationJsonDatabase {
       return {
         guestList: Array.isArray(parsed.guestList) ? parsed.guestList : [],
         guestListUpdatedAt: Number(parsed.guestListUpdatedAt || 0),
+        ceremonyConfig: normalizeCeremonyConfig(parsed.ceremonyConfig),
+        ceremonyConfigUpdatedAt: Number(parsed.ceremonyConfigUpdatedAt || 0),
         rsvpEntries: Array.isArray(parsed.rsvpEntries) ? parsed.rsvpEntries : [],
         deletedRsvpIds: Array.isArray(parsed.deletedRsvpIds)
           ? parsed.deletedRsvpIds
@@ -482,6 +564,8 @@ function loadLocalCache(): GraduationJsonDatabase {
   return {
     guestList: [],
     guestListUpdatedAt: 0,
+    ceremonyConfig: { ...DEFAULT_CEREMONY_CONFIG },
+    ceremonyConfigUpdatedAt: 0,
     rsvpEntries: [],
     deletedRsvpIds: [],
     updatedAt: new Date().toISOString(),

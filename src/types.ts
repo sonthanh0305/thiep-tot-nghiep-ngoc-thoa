@@ -57,3 +57,15 @@ export interface ScheduleMilestone {
   location: string;
   description: string;
 }
+
+export interface CeremonyConfig {
+  dateDisplay: string;
+  timeDisplay: string;
+  photoTimeDisplay: string;
+  hallName: string;
+  hallDirectionNote: string;
+  addressLine: string;
+  universityName: string;
+  googleMapsUrl: string;
+}
+

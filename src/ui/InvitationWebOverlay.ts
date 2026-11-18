@@ -1,5 +1,6 @@
-import type { AttendanceStatus, RsvpEntry } from '../types';
+import type { AttendanceStatus, CeremonyConfig, RsvpEntry } from '../types';
 import {
+  DEFAULT_CEREMONY_CONFIG,
   DEFAULT_INVITED_GUEST_LIST,
   GRADUATION_INFO,
   PHOTOBOOTH_FRAMES,
@@ -11,6 +12,8 @@ import {
   buildPersonalizedShareUrl,
   generateIcsCalendarContent,
   formatAttendanceLabel,
+  normalizeCeremonyConfig,
+  parseCeremonyTargetTimestampMs,
 } from '../utils/invitationLogic';
 import {
   renderPersonalizedPosterToCanvas,
@@ -20,6 +23,7 @@ import {
   loadGraduationDatabase,
   saveGraduationDatabase,
   saveAdminGuestList,
+  saveAdminCeremonyConfig,
   submitGuestRsvpEntry,
   deleteRsvpEntryFromDatabase,
   subscribeToDatabaseChanges,
@@ -40,6 +44,7 @@ export class InvitationWebOverlay {
   private isAdminMode = true;
   private isHostPreviewingGuest = false;
   private invitedGuestList: string[] = [...DEFAULT_INVITED_GUEST_LIST];
+  private ceremonyConfig: CeremonyConfig = { ...DEFAULT_CEREMONY_CONFIG };
   private rsvpEntries: RsvpEntry[] = [];
   private countdownTimerId: number | null = null;
   private unsubscribeDbSync: (() => void) | null = null;
@@ -125,6 +130,9 @@ export class InvitationWebOverlay {
       if (updatedDb.guestList.length > 0) {
         this.invitedGuestList = updatedDb.guestList;
       }
+      if (updatedDb.ceremonyConfig) {
+        this.ceremonyConfig = normalizeCeremonyConfig(updatedDb.ceremonyConfig);
+      }
       this.rsvpEntries = updatedDb.rsvpEntries;
 
       // Avoid interrupting the user if they are actively typing in an input or textarea
@@ -163,9 +171,11 @@ export class InvitationWebOverlay {
   }
 
   private async initializeDataAndAssets(): Promise<void> {
-    if (this.isAdminMode) {
-      try {
-        const db = await loadGraduationDatabase();
+    try {
+      const db = await loadGraduationDatabase();
+      this.ceremonyConfig = normalizeCeremonyConfig(db.ceremonyConfig);
+
+      if (this.isAdminMode) {
         // Always preserve loaded rsvpEntries FIRST before any guestList repair
         this.rsvpEntries = db.rsvpEntries;
 
@@ -178,14 +188,17 @@ export class InvitationWebOverlay {
         } else {
           this.invitedGuestList = db.guestList;
         }
-        this.render();
-      } catch {
-        // Fallback handled inside jsonDatabase
+      } else {
+        // Guest mode: strictly keep global RSVP list and guest roster hidden
+        this.rsvpEntries = [];
+        this.invitedGuestList = [];
       }
-    } else {
-      // Guest mode: strictly keep global RSVP list and guest roster hidden
-      this.rsvpEntries = [];
-      this.invitedGuestList = [];
+      this.render();
+    } catch {
+      if (!this.isAdminMode) {
+        this.rsvpEntries = [];
+        this.invitedGuestList = [];
+      }
     }
 
     await this.refreshPersonalizedPosterPreview();
@@ -204,22 +217,25 @@ export class InvitationWebOverlay {
       return `<span class="px-2 py-0.5 rounded-full text-[10px] theme-input theme-text-muted shrink-0">Chưa xác nhận</span>`;
     }
     if (matched.attendance === 'attending') {
-      return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold status-badge-attending shrink-0">✓ Dự lễ 11h30</span>`;
+      return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold status-badge-attending shrink-0">✓ Dự lễ ${this.escapeHtml(this.ceremonyConfig.timeDisplay)}</span>`;
     }
     if (matched.attendance === 'after_ceremony') {
-      return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold status-badge-photo shrink-0">📸 Chụp 12h15</span>`;
+      return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold status-badge-photo shrink-0">📸 Chụp ${this.escapeHtml(this.ceremonyConfig.photoTimeDisplay)}</span>`;
     }
     return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold status-badge-wish shrink-0">💌 Đã chúc</span>`;
   }
 
   private renderAttendancePill(status: AttendanceStatus): string {
+    const label = this.escapeHtml(
+      formatAttendanceLabel(status, this.ceremonyConfig),
+    );
     if (status === 'attending') {
-      return `<span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold status-badge-attending">${this.escapeHtml(formatAttendanceLabel(status))}</span>`;
+      return `<span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold status-badge-attending">${label}</span>`;
     }
     if (status === 'after_ceremony') {
-      return `<span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold status-badge-photo">${this.escapeHtml(formatAttendanceLabel(status))}</span>`;
+      return `<span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold status-badge-photo">${label}</span>`;
     }
-    return `<span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold status-badge-wish">${this.escapeHtml(formatAttendanceLabel(status))}</span>`;
+    return `<span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold status-badge-wish">${label}</span>`;
   }
 
   private async refreshPersonalizedPosterPreview(): Promise<void> {
@@ -227,6 +243,7 @@ export class InvitationWebOverlay {
       const dataUrl = await renderPersonalizedPosterToCanvas(
         this.posterCanvas,
         this.guestName,
+        this.ceremonyConfig,
       );
       if (dataUrl) {
         this.posterPreviewDataUrl = dataUrl;
@@ -270,7 +287,8 @@ export class InvitationWebOverlay {
   }
 
   private updateCountdownDom(): void {
-    const parts = calculateCountdown(Date.now());
+    const targetMs = parseCeremonyTargetTimestampMs(this.ceremonyConfig);
+    const parts = calculateCountdown(Date.now(), targetMs);
     const dEl = document.getElementById('cd-days');
     const hEl = document.getElementById('cd-hours');
     const mEl = document.getElementById('cd-minutes');
@@ -346,6 +364,7 @@ export class InvitationWebOverlay {
    * when entering the Main Gate and turning right.
    */
   private renderPtitCampusMapIllustration(): string {
+    const cfg = this.ceremonyConfig;
     return `
       <div class="rounded-2xl theme-card-subtle p-4 sm:p-6 mt-4">
         <div class="mb-4">
@@ -353,10 +372,10 @@ export class InvitationWebOverlay {
             <span class="text-2xl leading-tight shrink-0">🗺️</span>
             <div>
               <h4 class="text-base sm:text-xl font-bold theme-text-primary leading-tight mb-1">
-                Sơ Đồ Khuôn Viên PTIT TP.HCM — Chỉ Dẫn Khu Hội Trường A (HTA)
+                Sơ Đồ Khuôn Viên PTIT TP.HCM — Chỉ Dẫn Khu ${this.escapeHtml(cfg.hallName)} (HTA)
               </h4>
               <p class="text-sm sm:text-base theme-text-secondary leading-relaxed">
-                Bước vào <strong class="theme-text-primary">Cổng chính (97 Man Thiện)</strong> rồi <strong class="theme-text-accent">rẽ tay phải</strong> là tới ngay nguyên khu <strong class="theme-text-accent">Hội Trường A (HTA)</strong> lớn và bãi <strong class="theme-text-primary">Giữ xe</strong> bên phải.
+                Bước vào <strong class="theme-text-primary">Cổng chính (${this.escapeHtml(cfg.addressLine)})</strong> rồi <strong class="theme-text-accent">rẽ tay phải</strong> là tới ngay nguyên khu <strong class="theme-text-accent">${this.escapeHtml(cfg.hallName)} (HTA)</strong> lớn và bãi <strong class="theme-text-primary">Giữ xe</strong> bên phải.
               </p>
             </div>
           </div>
@@ -510,7 +529,7 @@ export class InvitationWebOverlay {
               <!-- Top Badge inside HTA -->
               <rect x="14" y="12" width="146" height="23" rx="11.5" fill="#fde047" />
               <text x="87" y="27" text-anchor="middle" fill="#7c2d12" font-size="11" font-weight="800">
-                📍 NƠI TỔ CHỨC LỄ (11h30)
+                📍 NƠI TỔ CHỨC LỄ (${this.escapeHtml(cfg.timeDisplay)})
               </text>
 
               <!-- Giant HTA Title -->
@@ -518,7 +537,7 @@ export class InvitationWebOverlay {
                 HTA
               </text>
               <text x="87" y="77" text-anchor="middle" fill="#fef08a" font-size="13" font-weight="800">
-                KHU HỘI TRƯỜNG A
+                KHU ${this.escapeHtml(cfg.hallName.toUpperCase())}
               </text>
               <text x="87" y="92" text-anchor="middle" fill="#ffffff" font-size="10.5" font-weight="700">
                 (Vào cổng chính ➔ Rẽ tay phải)
@@ -529,7 +548,7 @@ export class InvitationWebOverlay {
             <g transform="translate(114, 284)">
               <rect x="0" y="0" width="124" height="72" rx="5" fill="#ffffff" />
               <rect x="8" y="8" width="14" height="11" fill="#7c4dff" />
-              <text x="27" y="17" fill="#212529" font-size="10.5" font-weight="700">HTA (Hội trường A)</text>
+              <text x="27" y="17" fill="#212529" font-size="10.5" font-weight="700">HTA (${this.escapeHtml(cfg.hallName)})</text>
               <rect x="8" y="24" width="14" height="11" fill="#f7a941" />
               <text x="27" y="33" fill="#212529" font-size="10.5" font-weight="600">Phòng học</text>
               <rect x="8" y="40" width="14" height="11" fill="#38a3f1" />
@@ -580,7 +599,7 @@ export class InvitationWebOverlay {
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 text-sm sm:text-base">
           <div class="rounded-xl theme-card p-3.5 flex items-center gap-2">
             <span class="font-bold theme-text-accent shrink-0">1. Cổng vào:</span>
-            <span class="theme-text-primary font-medium">Cổng chính 97 Man Thiện</span>
+            <span class="theme-text-primary font-medium">${this.escapeHtml(cfg.addressLine)}</span>
           </div>
           <div class="rounded-xl theme-card p-3.5 flex items-center gap-2">
             <span class="font-bold theme-text-accent shrink-0">2. Rẽ tay phải:</span>
@@ -588,7 +607,7 @@ export class InvitationWebOverlay {
           </div>
           <div class="rounded-xl theme-card p-3.5 flex items-center gap-2">
             <span class="font-bold theme-text-accent shrink-0">3. Nơi dự lễ:</span>
-            <span class="theme-text-primary font-medium">Khu Hội Trường A (HTA - Màu tím)</span>
+            <span class="theme-text-primary font-medium">${this.escapeHtml(cfg.hallName)} (HTA - Màu tím)</span>
           </div>
         </div>
       </div>
@@ -596,7 +615,9 @@ export class InvitationWebOverlay {
   }
 
   public render(): void {
-    const cd = calculateCountdown(Date.now());
+    const cfg = this.ceremonyConfig;
+    const targetMs = parseCeremonyTargetTimestampMs(cfg);
+    const cd = calculateCountdown(Date.now(), targetMs);
     const rsvpStats = computeRsvpStats(this.rsvpEntries);
     const isDefaultAdminName =
       this.isAdminMode &&
@@ -622,7 +643,7 @@ export class InvitationWebOverlay {
 
           <div class="envelope-header-intro text-center mb-2">
             <span class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full theme-badge text-xs sm:text-sm font-bold uppercase tracking-wider mb-2">
-              🎓 ${GRADUATION_INFO.universityName}
+              🎓 ${this.escapeHtml(cfg.universityName)}
             </span>
             <h1 class="font-serif-editorial text-3xl sm:text-4xl font-bold theme-text-primary">
               Thiệp Mời Lễ Tốt Nghiệp
@@ -649,7 +670,7 @@ export class InvitationWebOverlay {
                 ${GRADUATION_INFO.graduateName}
               </p>
               <p class="text-xs sm:text-sm font-mono-code theme-text-gold mt-1 font-semibold">
-                ${GRADUATION_INFO.dateDisplay} | ${GRADUATION_INFO.timeDisplay} • ${GRADUATION_INFO.hallName} (HTA)
+                ${this.escapeHtml(cfg.dateDisplay)} | ${this.escapeHtml(cfg.timeDisplay)} • ${this.escapeHtml(cfg.hallName)}
               </p>
             </div>
 
@@ -662,7 +683,7 @@ export class InvitationWebOverlay {
                 ${this.escapeHtml(displayGuestName)}
               </p>
               <p class="text-xs sm:text-sm font-medium theme-text-secondary">
-                ${GRADUATION_INFO.hallName} (Khu HTA) • ${GRADUATION_INFO.dateDisplay} (${GRADUATION_INFO.timeDisplay})
+                ${this.escapeHtml(cfg.hallName)} • ${this.escapeHtml(cfg.dateDisplay)} (${this.escapeHtml(cfg.timeDisplay)})
               </p>
             </div>
 
@@ -930,6 +951,117 @@ export class InvitationWebOverlay {
               </div>
             </div>
 
+            <!-- Admin Ceremony Time & Venue Configuration Panel -->
+            <div class="mt-4 pt-4 border-t border-theme">
+              <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <span class="text-xs font-bold uppercase tracking-wider theme-text-accent">
+                  🗓️ Điều Chỉnh Thời Gian & Địa Điểm (Áp dụng cho Thiệp & Web Chính)
+                </span>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button type="button"
+                          id="btn-reset-ceremony-config"
+                          class="btn-secondary px-3 py-1.5 rounded-xl text-xs cursor-pointer">
+                    ↺ Khôi phục mặc định
+                  </button>
+                  <button type="button"
+                          id="btn-save-ceremony-config"
+                          class="btn-primary px-4 py-1.5 rounded-xl text-xs cursor-pointer">
+                    💾 Lưu Thời Gian & Địa Điểm
+                  </button>
+                </div>
+              </div>
+
+              <div class="rounded-2xl theme-card-subtle p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label for="input-cfg-date" class="block text-[11px] font-bold uppercase tracking-wider theme-text-muted mb-1">
+                    Ngày tổ chức
+                  </label>
+                  <input id="input-cfg-date"
+                         type="text"
+                         value="${this.escapeHtml(cfg.dateDisplay)}"
+                         placeholder="VD: 01.12.2026"
+                         class="w-full px-3 py-2 rounded-xl theme-input text-xs sm:text-sm font-semibold" />
+                </div>
+
+                <div>
+                  <label for="input-cfg-time" class="block text-[11px] font-bold uppercase tracking-wider theme-text-muted mb-1">
+                    Giờ làm lễ chính
+                  </label>
+                  <input id="input-cfg-time"
+                         type="text"
+                         value="${this.escapeHtml(cfg.timeDisplay)}"
+                         placeholder="VD: 11h30"
+                         class="w-full px-3 py-2 rounded-xl theme-input text-xs sm:text-sm font-semibold" />
+                </div>
+
+                <div>
+                  <label for="input-cfg-photo-time" class="block text-[11px] font-bold uppercase tracking-wider theme-text-muted mb-1">
+                    Giờ chụp hình giao lưu
+                  </label>
+                  <input id="input-cfg-photo-time"
+                         type="text"
+                         value="${this.escapeHtml(cfg.photoTimeDisplay)}"
+                         placeholder="VD: 12h15"
+                         class="w-full px-3 py-2 rounded-xl theme-input text-xs sm:text-sm font-semibold" />
+                </div>
+
+                <div>
+                  <label for="input-cfg-hall" class="block text-[11px] font-bold uppercase tracking-wider theme-text-muted mb-1">
+                    Hội trường / Khu vực
+                  </label>
+                  <input id="input-cfg-hall"
+                         type="text"
+                         value="${this.escapeHtml(cfg.hallName)}"
+                         placeholder="VD: Hội trường A"
+                         class="w-full px-3 py-2 rounded-xl theme-input text-xs sm:text-sm font-semibold" />
+                </div>
+
+                <div>
+                  <label for="input-cfg-direction" class="block text-[11px] font-bold uppercase tracking-wider theme-text-muted mb-1">
+                    Chỉ dẫn vị trí ngắn
+                  </label>
+                  <input id="input-cfg-direction"
+                         type="text"
+                         value="${this.escapeHtml(cfg.hallDirectionNote)}"
+                         placeholder="VD: Khu HTA — Rẽ phải từ cổng chính"
+                         class="w-full px-3 py-2 rounded-xl theme-input text-xs sm:text-sm" />
+                </div>
+
+                <div>
+                  <label for="input-cfg-address" class="block text-[11px] font-bold uppercase tracking-wider theme-text-muted mb-1">
+                    Địa chỉ trường / cổng
+                  </label>
+                  <input id="input-cfg-address"
+                         type="text"
+                         value="${this.escapeHtml(cfg.addressLine)}"
+                         placeholder="VD: 97 Man Thiện, Tăng Nhơn Phú, TPHCM"
+                         class="w-full px-3 py-2 rounded-xl theme-input text-xs sm:text-sm" />
+                </div>
+
+                <div>
+                  <label for="input-cfg-university" class="block text-[11px] font-bold uppercase tracking-wider theme-text-muted mb-1">
+                    Tên trường trên thiệp
+                  </label>
+                  <input id="input-cfg-university"
+                         type="text"
+                         value="${this.escapeHtml(cfg.universityName)}"
+                         placeholder="HỌC VIỆN CÔNG NGHỆ BƯU CHÍNH VIỄN THÔNG"
+                         class="w-full px-3 py-2 rounded-xl theme-input text-xs sm:text-sm" />
+                </div>
+
+                <div>
+                  <label for="input-cfg-maps-url" class="block text-[11px] font-bold uppercase tracking-wider theme-text-muted mb-1">
+                    Link chỉ đường Google Maps
+                  </label>
+                  <input id="input-cfg-maps-url"
+                         type="text"
+                         value="${this.escapeHtml(cfg.googleMapsUrl)}"
+                         placeholder="https://www.google.com/maps/..."
+                         class="w-full px-3 py-2 rounded-xl theme-input text-xs sm:text-sm" />
+                </div>
+              </div>
+            </div>
+
             <!-- Admin Table of Received RSVP Confirmations & Wishes -->
             <div class="mt-4 pt-4 border-t border-theme">
               <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
@@ -963,8 +1095,8 @@ export class InvitationWebOverlay {
                                    class="px-2.5 py-1.5 rounded-lg theme-input text-xs font-semibold" />
                             <select id="edit-rsvp-att-${this.escapeHtml(entry.id)}"
                                     class="px-2.5 py-1.5 rounded-lg theme-input text-xs font-semibold">
-                              <option value="attending" ${entry.attendance === 'attending' ? 'selected' : ''}>✓ Dự lễ 11h30</option>
-                              <option value="after_ceremony" ${entry.attendance === 'after_ceremony' ? 'selected' : ''}>📸 Chụp 12h15</option>
+                              <option value="attending" ${entry.attendance === 'attending' ? 'selected' : ''}>✓ Dự lễ ${this.escapeHtml(cfg.timeDisplay)}</option>
+                              <option value="after_ceremony" ${entry.attendance === 'after_ceremony' ? 'selected' : ''}>📸 Chụp ${this.escapeHtml(cfg.photoTimeDisplay)}</option>
                               <option value="remote_wish" ${entry.attendance === 'remote_wish' ? 'selected' : ''}>💌 Gửi lời chúc</option>
                             </select>
                           </div>
@@ -1061,7 +1193,7 @@ export class InvitationWebOverlay {
               <section class="rounded-3xl theme-card p-5 sm:p-7">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
                   <span class="px-3.5 py-1 rounded-full text-xs font-mono-code uppercase tracking-wider theme-badge">
-                    🎓 ${GRADUATION_INFO.universityName}
+                    🎓 ${this.escapeHtml(cfg.universityName)}
                   </span>
                 </div>
 
@@ -1080,7 +1212,7 @@ export class InvitationWebOverlay {
                     <div>
                       <p class="text-xs sm:text-sm uppercase tracking-wider theme-text-muted font-bold">Thời Gian</p>
                       <p class="font-mono-code text-lg sm:text-2xl font-bold theme-text-primary mt-1">
-                        ${GRADUATION_INFO.dateDisplay} | ${GRADUATION_INFO.timeDisplay}
+                        ${this.escapeHtml(cfg.dateDisplay)} | ${this.escapeHtml(cfg.timeDisplay)}
                       </p>
                     </div>
                   </div>
@@ -1092,9 +1224,9 @@ export class InvitationWebOverlay {
                     <div>
                       <p class="text-xs sm:text-sm uppercase tracking-wider theme-text-muted font-bold">Địa Điểm</p>
                       <p class="font-serif-editorial text-lg sm:text-2xl font-bold theme-text-primary mt-1 leading-tight">
-                        ${GRADUATION_INFO.hallName} (Khu HTA — Rẽ phải từ cổng chính)
+                        ${this.escapeHtml(cfg.hallName)}${cfg.hallDirectionNote ? ` (${this.escapeHtml(cfg.hallDirectionNote)})` : ''}
                       </p>
-                      <p class="text-sm sm:text-base theme-text-secondary font-medium mt-1">${GRADUATION_INFO.addressLine}</p>
+                      <p class="text-sm sm:text-base theme-text-secondary font-medium mt-1">${this.escapeHtml(cfg.addressLine)}</p>
                     </div>
                   </div>
                 </div>
@@ -1133,7 +1265,7 @@ export class InvitationWebOverlay {
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
-                  <a href="${GRADUATION_INFO.googleMapsUrl}"
+                  <a href="${this.escapeHtml(cfg.googleMapsUrl)}"
                      target="_blank"
                      rel="noopener noreferrer"
                      class="btn-primary flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-xs sm:text-sm">
@@ -1200,8 +1332,8 @@ export class InvitationWebOverlay {
                            class="px-3 py-2.5 rounded-xl theme-input text-xs sm:text-sm" />
                     <select id="rsvp-attendance"
                             class="px-3 py-2.5 rounded-xl theme-input text-xs sm:text-sm font-semibold">
-                      <option value="attending">✓ Tham dự lúc 11h30 tại Hội trường A</option>
-                      <option value="after_ceremony">📸 Ghé chụp hình lúc 12h15</option>
+                      <option value="attending">✓ Tham dự lúc ${this.escapeHtml(cfg.timeDisplay)} tại ${this.escapeHtml(cfg.hallName)}</option>
+                      <option value="after_ceremony">📸 Ghé chụp hình lúc ${this.escapeHtml(cfg.photoTimeDisplay)}</option>
                       <option value="remote_wish">💌 Gửi lời chúc từ xa</option>
                     </select>
                   </div>
@@ -1335,15 +1467,16 @@ export class InvitationWebOverlay {
         if (this.guestName === 'Quý khách') {
           this.guestName = 'Ngọc Thoa';
         }
-        const db = await loadGraduationDatabase();
-        this.invitedGuestList =
-          db.guestList.length > 0 ? db.guestList : this.invitedGuestList;
-        this.rsvpEntries = db.rsvpEntries;
-        this.setupRealtimeDatabaseSubscription();
-        await this.refreshPersonalizedPosterPreview();
-        this.render();
-        this.showToast('Đã quay về Quản Trị');
-      });
+          const db = await loadGraduationDatabase();
+          this.invitedGuestList =
+            db.guestList.length > 0 ? db.guestList : this.invitedGuestList;
+          this.ceremonyConfig = normalizeCeremonyConfig(db.ceremonyConfig);
+          this.rsvpEntries = db.rsvpEntries;
+          this.setupRealtimeDatabaseSubscription();
+          await this.refreshPersonalizedPosterPreview();
+          this.render();
+          this.showToast('Đã quay về Quản Trị');
+        });
 
     document
       .getElementById('btn-download-poster')
@@ -1353,6 +1486,7 @@ export class InvitationWebOverlay {
           const dataUrl = await renderPersonalizedPosterToCanvas(
             this.posterCanvas,
             this.guestName,
+            this.ceremonyConfig,
           );
           if (dataUrl) {
             const a = document.createElement('a');
@@ -1405,6 +1539,74 @@ export class InvitationWebOverlay {
         applyGuestNameChange(nameInput.value);
       });
 
+      const readCeremonyConfigInputs = (): CeremonyConfig => {
+        const dateEl = document.getElementById(
+          'input-cfg-date',
+        ) as HTMLInputElement | null;
+        const timeEl = document.getElementById(
+          'input-cfg-time',
+        ) as HTMLInputElement | null;
+        const photoTimeEl = document.getElementById(
+          'input-cfg-photo-time',
+        ) as HTMLInputElement | null;
+        const hallEl = document.getElementById(
+          'input-cfg-hall',
+        ) as HTMLInputElement | null;
+        const dirEl = document.getElementById(
+          'input-cfg-direction',
+        ) as HTMLInputElement | null;
+        const addrEl = document.getElementById(
+          'input-cfg-address',
+        ) as HTMLInputElement | null;
+        const uniEl = document.getElementById(
+          'input-cfg-university',
+        ) as HTMLInputElement | null;
+        const mapsEl = document.getElementById(
+          'input-cfg-maps-url',
+        ) as HTMLInputElement | null;
+
+        return normalizeCeremonyConfig({
+          dateDisplay: dateEl?.value ?? this.ceremonyConfig.dateDisplay,
+          timeDisplay: timeEl?.value ?? this.ceremonyConfig.timeDisplay,
+          photoTimeDisplay:
+            photoTimeEl?.value ?? this.ceremonyConfig.photoTimeDisplay,
+          hallName: hallEl?.value ?? this.ceremonyConfig.hallName,
+          hallDirectionNote:
+            dirEl?.value ?? this.ceremonyConfig.hallDirectionNote,
+          addressLine: addrEl?.value ?? this.ceremonyConfig.addressLine,
+          universityName: uniEl?.value ?? this.ceremonyConfig.universityName,
+          googleMapsUrl: mapsEl?.value ?? this.ceremonyConfig.googleMapsUrl,
+        });
+      };
+
+      document
+        .getElementById('btn-save-ceremony-config')
+        ?.addEventListener('click', async () => {
+          soundEngine.playSoftClick();
+          const nextCfg = readCeremonyConfigInputs();
+          this.ceremonyConfig = nextCfg;
+          const saved = await saveAdminCeremonyConfig(nextCfg);
+          if (saved.ceremonyConfig) {
+            this.ceremonyConfig = normalizeCeremonyConfig(saved.ceremonyConfig);
+          }
+          await this.refreshPersonalizedPosterPreview();
+          this.render();
+          this.showToast(
+            'Đã lưu Thời gian & Địa điểm cho Thiệp và Trang web chính!',
+          );
+        });
+
+      document
+        .getElementById('btn-reset-ceremony-config')
+        ?.addEventListener('click', async () => {
+          soundEngine.playSoftClick();
+          this.ceremonyConfig = { ...DEFAULT_CEREMONY_CONFIG };
+          await saveAdminCeremonyConfig(this.ceremonyConfig);
+          await this.refreshPersonalizedPosterPreview();
+          this.render();
+          this.showToast('Đã khôi phục Thời gian & Địa điểm mặc định');
+        });
+
       document
         .getElementById('btn-sync-json-db')
         ?.addEventListener('click', async () => {
@@ -1413,7 +1615,11 @@ export class InvitationWebOverlay {
           if (db.guestList.length > 0) {
             this.invitedGuestList = db.guestList;
           }
+          if (db.ceremonyConfig) {
+            this.ceremonyConfig = normalizeCeremonyConfig(db.ceremonyConfig);
+          }
           this.rsvpEntries = db.rsvpEntries;
+          await this.refreshPersonalizedPosterPreview();
           this.render();
           this.showToast(
             `Đã làm mới danh sách (${this.rsvpEntries.length} phản hồi)`,
@@ -1730,6 +1936,7 @@ export class InvitationWebOverlay {
           soundEngine.playSoftClick();
           exportDatabaseAsJsonFile({
             guestList: this.invitedGuestList,
+            ceremonyConfig: this.ceremonyConfig,
             rsvpEntries: this.rsvpEntries,
             updatedAt: new Date().toISOString(),
           });
@@ -1745,6 +1952,7 @@ export class InvitationWebOverlay {
           const text = await file.text();
           const parsed = JSON.parse(text) as {
             guestList?: string[];
+            ceremonyConfig?: Partial<CeremonyConfig>;
             rsvpEntries?: RsvpEntry[];
           };
           if (Array.isArray(parsed.guestList)) {
@@ -1752,19 +1960,29 @@ export class InvitationWebOverlay {
               .map((n) => String(n).trim())
               .filter(Boolean);
           }
+          if (parsed.ceremonyConfig) {
+            this.ceremonyConfig = normalizeCeremonyConfig(
+              parsed.ceremonyConfig,
+            );
+          }
           if (Array.isArray(parsed.rsvpEntries)) {
             this.rsvpEntries = parsed.rsvpEntries;
           }
           const saved = await saveGraduationDatabase(
             {
               guestList: this.invitedGuestList,
+              ceremonyConfig: this.ceremonyConfig,
               rsvpEntries: this.rsvpEntries,
               updatedAt: new Date().toISOString(),
             },
             true,
           );
           this.invitedGuestList = saved.guestList;
+          if (saved.ceremonyConfig) {
+            this.ceremonyConfig = normalizeCeremonyConfig(saved.ceremonyConfig);
+          }
           this.rsvpEntries = saved.rsvpEntries;
+          await this.refreshPersonalizedPosterPreview();
           this.render();
           this.showToast('Đã nhập danh sách thành công');
         } catch {
@@ -1777,7 +1995,10 @@ export class InvitationWebOverlay {
       .getElementById('btn-download-ics')
       ?.addEventListener('click', () => {
         soundEngine.playSoftClick();
-        const ics = generateIcsCalendarContent(this.guestName);
+        const ics = generateIcsCalendarContent(
+          this.guestName,
+          this.ceremonyConfig,
+        );
         const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
